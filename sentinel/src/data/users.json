@@ -1,0 +1,38 @@
+[
+  {
+    "id": "user-dev-001",
+    "username": "dev01",
+    "passwordHash": "87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b",
+    "role": "developer",
+    "displayName": "Alice (Developer)",
+    "email": "alice@sentinel-research.dev",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "user-dev-002",
+    "username": "dev02",
+    "passwordHash": "c5b02850680fa14a3cfe775ded4034a4a4a7f2aa3f3942ce28384e8c4e31b141",
+    "role": "developer",
+    "displayName": "Bob (Developer)",
+    "email": "bob@sentinel-research.dev",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "user-sup-001",
+    "username": "supervisor01",
+    "passwordHash": "1c8b3a939e438b44507d10fe725bc34c206a0a9d0189be00e47300b4e8e6d6d9",
+    "role": "supervisor",
+    "displayName": "Carol (Supervisor)",
+    "email": "carol@sentinel-research.dev",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "user-adm-001",
+    "username": "admin",
+    "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+    "role": "administrator",
+    "displayName": "Admin",
+    "email": "admin@sentinel-research.dev",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "🛡 Launch Sentinel Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/sentinel"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/sentinel/out/**/*.js"
+      ],
+      "preLaunchTask": "compile-sentinel"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "name": "sentinel",
+  "displayName": "Sentinel",
+  "description": "Real-time intelligent code security analyzer — detects vulnerabilities as you type",
+  "version": "0.1.0",
+  "publisher": "sentinel-research",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "extensionDependencies": [
+    "vscode.github-authentication"
+  ],
+  "keywords": [
+    "security",
+    "vulnerability",
+    "sql injection",
+    "xss",
+    "static analysis"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "authentication": [
+      {
+        "id": "github",
+        "label": "GitHub"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sentinel.showDashboard",
+        "title": "Sentinel: Show Security Dashboard",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "sentinel.analyzeDocument",
+        "title": "Sentinel: Analyze Current File",
+        "icon": "$(search)"
+      },
+      {
+        "command": "sentinel.showOutput",
+        "title": "Sentinel: Show Output Channel"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "sentinel.showDashboard",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Sentinel",
+      "properties": {
+        "sentinel.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable Sentinel real-time analysis"
+        },
+        "sentinel.debounceMs": {
+          "type": "number",
+          "default": 400,
+          "description": "Debounce delay (ms) before running analysis after a code change"
+        },
+        "sentinel.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "URL of the Member 2 backend API for sending security events"
+        },
+        "sentinel.developerId": {
+          "type": "string",
+          "default": "DEV001",
+          "description": "Your developer identifier for behaviour tracking"
+        },
+        "sentinel.enableAI": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable AI-assisted vulnerability analysis via the Intelligent Feedback Engine (IFE)"
+        },
+        "sentinel.ifeUrl": {
+          "type": "string",
+          "default": "http://localhost:4000",
+          "description": "URL of the Intelligent Feedback Engine (Component 3) for AI-generated explanations and personalised fixes"
+        },
+        "sentinel.minConfidence": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum detection confidence threshold (0.0–1.0). Findings below this score are hidden. Lower = more alerts, higher = fewer but more precise."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "package": "npx vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.71.1",
+    "@typescript-eslint/parser": "^8.71.1",
+    "eslint": "^8.0.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
