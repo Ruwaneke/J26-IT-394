@@ -2,7 +2,7 @@ package com.sentinel.tracker.controller;
 
 import com.sentinel.tracker.dto.CreateDeveloperInteractionRequest;
 import com.sentinel.tracker.dto.DeveloperInteractionResponse;
-import com.sentinel.tracker.service.BehaviourLogService;
+import com.sentinel.tracker.service.DeveloperInteractionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,31 +19,31 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DeveloperInteractionController {
 
-    private final BehaviourLogService behaviourLogService;
+    private final DeveloperInteractionService developerInteractionService;
 
     @PostMapping
     public ResponseEntity<DeveloperInteractionResponse> createInteraction(@Valid @RequestBody CreateDeveloperInteractionRequest request) {
-        DeveloperInteractionResponse response = behaviourLogService.createInteraction(request);
+        DeveloperInteractionResponse response = developerInteractionService.createInteraction(request);
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<DeveloperInteractionResponse> getInteractionById(@PathVariable Long id) {
-        return ResponseEntity.ok(behaviourLogService.getInteractionById(id));
+        return ResponseEntity.ok(developerInteractionService.getInteractionById(id));
     }
 
     @GetMapping
     public ResponseEntity<List<DeveloperInteractionResponse>> getAllInteractions() {
-        return ResponseEntity.ok(behaviourLogService.getAllInteractions());
+        return ResponseEntity.ok(developerInteractionService.getAllInteractions());
     }
 
     @GetMapping("/developer/{developerId}")
     public ResponseEntity<List<DeveloperInteractionResponse>> getInteractionsByDeveloper(@PathVariable Long developerId) {
-        return ResponseEntity.ok(behaviourLogService.getInteractionsByDeveloper(developerId));
+        return ResponseEntity.ok(developerInteractionService.getInteractionsByDeveloper(developerId));
     }
 
     @GetMapping("/security-event/{securityEventId}")
     public ResponseEntity<List<DeveloperInteractionResponse>> getInteractionsBySecurityEvent(@PathVariable Long securityEventId) {
-        return ResponseEntity.ok(behaviourLogService.getInteractionsBySecurityEvent(securityEventId));
+        return ResponseEntity.ok(developerInteractionService.getInteractionsBySecurityEvent(securityEventId));
     }
 }

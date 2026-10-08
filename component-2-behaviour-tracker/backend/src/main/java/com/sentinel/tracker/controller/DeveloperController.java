@@ -13,11 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * REST controller for Developer resource management.
- *
- * Base path: /api/developers
- */
+
 @RestController
 @RequestMapping("/api/developers")
 @RequiredArgsConstructor
