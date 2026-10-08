@@ -53,6 +53,10 @@ export interface AuthSession {
   githubName?: string;
   /** Raw VS Code GitHub access token (used for API calls) */
   githubAccessToken?: string;
+  /** GitHub numeric user ID (as a string) */
+  githubId?: string;
+  /** Developer.id returned by the behaviour tracker backend (POST /api/auth/github) */
+  backendDeveloperId?: number;
 }
 
 /** Minimal shape returned by the GitHub REST API /user endpoint */
@@ -136,7 +140,12 @@ export class AuthManager {
         githubAvatarUrl:   profile.avatar_url,
         githubName:        profile.name ?? profile.login,
         githubAccessToken: vsSession.accessToken,
+        githubId:          String(profile.id),
       };
+
+      // Map the GitHub identity to a backend developerId. Non-fatal: if the
+      // backend is down, ensureBackendDeveloperId() retries later.
+      session.backendDeveloperId = await this.syncBackendIdentity(session);
 
       await this.context.workspaceState.update(SESSION_KEY, session);
 
@@ -205,6 +214,64 @@ export class AuthManager {
 
   isLoggedIn(): boolean {
     return !!this.getSession();
+  }
+
+  /**
+   * Return the backend developerId for the current GitHub session, syncing
+   * with the backend first if it has not been obtained yet.
+   * Returns undefined for password sessions or when the backend is unreachable.
+   */
+  async ensureBackendDeveloperId(): Promise<number | undefined> {
+    const session = this.getSession();
+    if (!session || session.authMethod !== 'github' || !session.githubId) {
+      return undefined;
+    }
+    if (session.backendDeveloperId !== undefined) {
+      return session.backendDeveloperId;
+    }
+
+    const developerId = await this.syncBackendIdentity(session);
+    // Only persist if the same user is still logged in
+    if (developerId !== undefined && this.getSession()?.githubId === session.githubId) {
+      await this.context.workspaceState.update(SESSION_KEY, { ...session, backendDeveloperId: developerId });
+    }
+    return developerId;
+  }
+
+  // ── Private: Backend Identity ────────────────────────────────────────────────
+
+  /**
+   * POST the GitHub identity to the behaviour tracker backend, which finds or
+   * creates the matching Developer record and returns its id.
+   */
+  private async syncBackendIdentity(session: AuthSession): Promise<number | undefined> {
+    const backendUrl = vscode.workspace.getConfiguration('sentinel')
+      .get<string>('backendUrl') ?? 'http://localhost:8080';
+    try {
+      const response = await fetch(`${backendUrl}/api/auth/github`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          githubId:       session.githubId,
+          githubUsername: session.githubUsername,
+          email:          session.email || undefined,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (!response.ok) {
+        console.error(`[AuthManager] Backend identity sync failed: ${response.status}`);
+        return undefined;
+      }
+
+      const developer = await response.json() as { id: number };
+      console.log(`[AuthManager] Backend developerId for @${session.githubUsername}: ${developer.id}`);
+      return developer.id;
+
+    } catch (err) {
+      console.error('[AuthManager] Backend identity sync error:', err);
+      return undefined;
+    }
   }
 
   // ── User Store ──────────────────────────────────────────────────────────────

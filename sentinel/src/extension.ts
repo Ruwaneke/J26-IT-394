@@ -65,7 +65,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   analyzer = new SecurityAnalyzer();
   diagnosticManager = new DiagnosticManager();
-  eventClient = new SecurityEventClient();
+  // Events carry the backend developerId of the GitHub-authenticated user
+  eventClient = new SecurityEventClient(() => authManager.ensureBackendDeveloperId());
 
   // Initialise developer record store — persists findings to src/DATA/<developerId>_vulnerability_records.json
   recordStore = new DeveloperRecordStore(context.extensionPath);
@@ -89,7 +90,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Silently restore GitHub session (no prompt shown) ────────────────────────
   // If the developer was previously signed in via GitHub, restore their
   // session automatically. Only runs if no session already exists in state.
-  if (!authManager.isLoggedIn()) {
+  // Also re-runs for GitHub sessions saved before backend identity mapping
+  // existed (no githubId), so they get a backend developerId.
+  const existingSession = authManager.getSession();
+  if (!existingSession || (existingSession.authMethod === 'github' && !existingSession.githubId)) {
     authManager.refreshGitHubSession().then(session => {
       if (session) {
         log(`👋 Auto-restored GitHub session: ${session.githubUsername ?? session.username} (${session.role})`);
