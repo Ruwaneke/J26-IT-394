@@ -52,9 +52,17 @@ psql -d developer_behavior -f src/main/resources/schema.sql   # optional – Hib
 cp src/main/resources/application.properties.example src/main/resources/application.properties
 ```
 
-Then set your database username and password. You can also use the environment-variable form shown in the template (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`).
+The template contains placeholders only. Provide the credentials as environment variables
+(`DB_HOST`, `DB_PORT` and `DB_NAME` are optional and default to `localhost`, `5432` and `developer_behavior`):
 
-> Do not commit `application.properties` with real credentials.
+```bash
+export DB_USERNAME=<your-db-user>
+export DB_PASSWORD=<your-db-password>
+```
+
+or replace the placeholders in your local `application.properties`.
+
+> `application.properties` is listed in `.gitignore` – never commit it or put real credentials in the template.
 
 ### 3. Run
 
@@ -83,6 +91,14 @@ Tests use an H2 in-memory database (`src/test/resources/application-test.propert
 |--------|--------------------|---------------------------------------------------------------|
 | POST   | `/api/auth/github` | Log in with GitHub; finds or creates/links the developer      |
 
+Request body: `{"githubAccessToken": "<token from the VS Code GitHub session>"}`.
+The backend verifies the token with GitHub's `GET /user` and takes the developer's
+GitHub id, login and email from that response; any identity fields sent by the client
+are ignored. Responses: `200` developer returned, `400` missing token, `401` token
+rejected by GitHub, `409` login already linked to a different GitHub account,
+`502` GitHub API unavailable. The GitHub API base URL can be changed with
+`github.api.base-url` (default `https://api.github.com`).
+
 ### Developers
 | Method | Path                   | Description         |
 |--------|------------------------|---------------------|
@@ -110,10 +126,17 @@ Tests use an H2 in-memory database (`src/test/resources/application-test.propert
 ### Behaviour Logs
 | Method | Path                                         | Description            |
 |--------|----------------------------------------------|------------------------|
-| POST   | `/api/behaviour-logs`                        | Create a behaviour log |
+| POST   | `/api/behaviour-logs`                        | **Deprecated** – use `POST /api/developer-interactions` |
 | GET    | `/api/behaviour-logs`                        | List all logs          |
 | GET    | `/api/behaviour-logs/{id}`                   | Get a log              |
 | GET    | `/api/behaviour-logs/developer/{developerId}` | Logs for a developer   |
+
+`POST /api/developer-interactions` is the single write path for developer actions.
+The deprecated `POST /api/behaviour-logs` still works but is processed by the same
+interaction logic (status update, lifecycle history, response time), requires
+`securityEventId`, and responds with `Deprecation: true` and a `Link` header pointing to
+the replacement. Both APIs read and write the same `behaviour_logs` table, so the GET
+endpoints above also return actions recorded as developer interactions.
 
 ### Lifecycle History & Analysis
 | Method | Path                                                     | Description                              |
@@ -159,6 +182,30 @@ curl -X POST http://localhost:8080/api/developer-interactions \
 | `BehaviourAction`     | `OPEN`, `IGNORE`, `FIX`, `REOPEN`, `DISMISS`    |
 | `SecurityEventStatus` | `DETECTED`, `OPENED`, `IGNORED`, `REOPENED`, `FIXED` |
 
+## Vulnerability Lifecycle
+
+Creating a security event records its first lifecycle history entry (`null` → `DETECTED`, changed
+by `SYSTEM`). Each developer action then maps to a status, and every status change adds one entry:
+
+| Action              | New status |
+|---------------------|------------|
+| `OPEN`              | `OPENED`   |
+| `FIX`               | `FIXED`    |
+| `IGNORE`, `DISMISS` | `IGNORED`  |
+| `REOPEN`            | `REOPENED` |
+
+| From       | Allowed next statuses          |
+|------------|--------------------------------|
+| `DETECTED` | `OPENED`, `FIXED`, `IGNORED`   |
+| `OPENED`   | `FIXED`, `IGNORED`             |
+| `IGNORED`  | `OPENED`, `FIXED`, `REOPENED`  |
+| `REOPENED` | `OPENED`, `FIXED`, `IGNORED`   |
+| `FIXED`    | `REOPENED`                     |
+
+An action that would make any other change (for example `OPEN` on a `FIXED` event) is rejected with
+`409 Conflict` and nothing is recorded. An action that keeps the current status (for example a second
+`OPEN`) is still logged but adds no history entry.
+
 ## Behaviour Summary
 
 `GET /api/developer-behaviour/{developerId}` returns counts (opened, fixed, ignored, dismissed, reopened), rates (fix, ignore, reopen, high-severity fix), average response time in seconds, repeated vulnerability count, and an overall `behaviourClassification`.
@@ -169,5 +216,5 @@ All errors go through `GlobalExceptionHandler` and return an `ApiErrorResponse`:
 
 - `400` – validation failure
 - `404` – resource not found (`ResourceNotFoundException`)
-- `409` – duplicate resource (`DuplicateResourceException`)
+- `409` – duplicate resource (`DuplicateResourceException`) or invalid lifecycle transition (`InvalidStatusTransitionException`)
 - `500` – unexpected server error
