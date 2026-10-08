@@ -21,7 +21,8 @@ import java.time.LocalDateTime;
 @Table(
     name = "developers",
     indexes = {
-        @Index(name = "idx_developer_identifier", columnList = "developer_identifier")
+        @Index(name = "idx_developer_identifier", columnList = "developer_identifier"),
+        @Index(name = "idx_developer_github_id",  columnList = "github_id")
     }
 )
 @EntityListeners(AuditingEntityListener.class)
@@ -41,6 +42,20 @@ public class Developer {
      */
     @Column(name = "developer_identifier", nullable = false, unique = true, length = 255)
     private String developerIdentifier;
+
+    // ── GitHub Identity Fields (added for GitHub auth integration) ────────────
+
+    /** GitHub numeric user ID – unique per GitHub account. Nullable for legacy records. */
+    @Column(name = "github_id", unique = true, length = 100)
+    private String githubId;
+
+    /** GitHub login username (e.g. "octocat"). */
+    @Column(name = "github_username", length = 255)
+    private String githubUsername;
+
+    /** Primary email address from GitHub profile. */
+    @Column(name = "email", length = 255)
+    private String email;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
