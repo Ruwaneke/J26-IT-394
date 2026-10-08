@@ -1,0 +1,5 @@
+target/
+
+# Local configuration – may contain database credentials. Never commit.
+# Copy src/main/resources/application.properties.example to application.properties and fill it in.
+src/main/resources/application.properties
