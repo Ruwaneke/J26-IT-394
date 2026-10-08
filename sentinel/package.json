@@ -71,13 +71,13 @@
         },
         "sentinel.backendUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
+          "default": "http://localhost:8080",
           "description": "URL of the Member 2 backend API for sending security events"
         },
         "sentinel.developerId": {
           "type": "string",
           "default": "DEV001",
-          "description": "Your developer identifier for behaviour tracking"
+          "description": "Fallback identifier for local learning data only. Backend events use the developer ID obtained from GitHub sign-in."
         },
         "sentinel.enableAI": {
           "type": "boolean",

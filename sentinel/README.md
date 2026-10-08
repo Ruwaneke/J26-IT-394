@@ -98,8 +98,8 @@ Sentinel should immediately flag it as SQL_INJECTION with HIGH severity.
 |---|---|---|
 | `sentinel.enabled` | `true` | Enable/disable analysis |
 | `sentinel.debounceMs` | `400` | Delay before analyzing (ms) |
-| `sentinel.backendUrl` | `http://localhost:3000` | Member 2 backend API |
-| `sentinel.developerId` | `DEV001` | Your developer ID |
+| `sentinel.backendUrl` | `http://localhost:8080` | Member 2 backend API |
+| `sentinel.developerId` | `DEV001` | Fallback ID for local learning data only (backend uses GitHub identity) |
 
 ---
 
@@ -121,20 +121,41 @@ interface SecurityFinding {
 }
 ```
 
+### Developer Identity (POST /api/auth/github)
+Sent after GitHub sign-in. The backend finds or creates the developer and returns its `id`,
+which the extension stores in the session and uses as `developerId` in every request below.
+```json
+{ "githubId": "1234567", "githubUsername": "octocat", "email": "octocat@github.com" }
+```
+
 ### Security Event API (POST /api/security-events)
+Sent when a vulnerability is detected.
 ```json
 {
-  "developerId": "DEV001",
-  "sessionId": "SESSION-xxx",
+  "developerId": 1,
   "vulnerabilityType": "SQL_INJECTION",
   "severity": "HIGH",
-  "confidence": 0.95,
   "fileName": "UserController.cs",
   "lineNumber": 42,
-  "action": "DETECTED",
-  "timestamp": "2026-08-10T20:10:00Z"
+  "message": "Possible SQL injection"
 }
 ```
+
+### Developer Interaction API (POST /api/developer-interactions)
+Sent when the developer acts on a finding. `securityEventId` is the `id` returned when the event was created.
+Actions map to `OPEN` (explanation / secure example viewed), `FIX`, `IGNORE` (incl. false positive) and `DISMISS`.
+```json
+{
+  "securityEventId": 10,
+  "developerId": 1,
+  "action": "OPEN",
+  "sessionId": "SESSION-xxx",
+  "source": "VSCODE",
+  "metadata": "{\"extensionAction\":\"EXPLANATION_VIEWED\",\"confidence\":0.95}"
+}
+```
+
+Events are only sent while signed in with GitHub; they are queued until the developer ID is available.
 
 ---
 
