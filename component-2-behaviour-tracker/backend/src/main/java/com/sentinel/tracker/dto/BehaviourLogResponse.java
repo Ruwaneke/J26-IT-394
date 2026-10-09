@@ -36,4 +36,20 @@ public class BehaviourLogResponse {
                 .createdAt(log.getCreatedAt())
                 .build();
     }
+
+    /**
+     * Factory method: maps a developer interaction (same underlying BehaviourLog row)
+     * to the legacy behaviour-log representation.
+     */
+    public static BehaviourLogResponse from(DeveloperInteractionResponse interaction) {
+        return BehaviourLogResponse.builder()
+                .id(interaction.getId())
+                .developerId(interaction.getDeveloperId())
+                .securityEventId(interaction.getSecurityEventId())
+                .actionType(interaction.getAction())
+                .timestamp(interaction.getActionTimestamp())
+                .contextMetadata(interaction.getMetadata())
+                .createdAt(interaction.getCreatedAt())
+                .build();
+    }
 }

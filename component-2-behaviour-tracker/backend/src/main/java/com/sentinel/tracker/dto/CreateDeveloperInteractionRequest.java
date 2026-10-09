@@ -2,6 +2,7 @@ package com.sentinel.tracker.dto;
 
 import com.sentinel.tracker.enums.BehaviourAction;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -26,8 +27,10 @@ public class CreateDeveloperInteractionRequest {
      */
     private LocalDateTime actionTimestamp;
 
+    @Size(max = 255, message = "sessionId must be at most 255 characters")
     private String sessionId;
 
+    @Size(max = 255, message = "source must be at most 255 characters")
     private String source;
 
     /**

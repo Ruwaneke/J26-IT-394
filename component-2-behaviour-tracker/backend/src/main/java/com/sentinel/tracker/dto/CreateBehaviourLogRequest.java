@@ -8,7 +8,11 @@ import java.time.LocalDateTime;
 
 /**
  * Request DTO for creating a new BehaviourLog entry.
+ *
+ * @deprecated Used only by the deprecated {@code POST /api/behaviour-logs}.
+ * Use {@link CreateDeveloperInteractionRequest} with {@code POST /api/developer-interactions}.
  */
+@Deprecated
 @Data
 public class CreateBehaviourLogRequest {
 
@@ -16,8 +20,9 @@ public class CreateBehaviourLogRequest {
     private Long developerId;
 
     /**
-     * Optional — a log may not always be associated with a specific security event.
+     * Required – every action is applied to a security event's lifecycle.
      */
+    @NotNull(message = "securityEventId must not be null")
     private Long securityEventId;
 
     @NotNull(message = "actionType must not be null")
