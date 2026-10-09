@@ -26,8 +26,12 @@ public class CreateSecurityEventRequest {
     @Size(max = 500, message = "fileName must be at most 500 characters")
     private String fileName;
 
-    @PositiveOrZero(message = "lineNumber must be zero or positive")
-    private int lineNumber;
+    /**
+     * Boxed so that a missing value is rejected instead of silently defaulting to 0.
+     */
+    @NotNull(message = "lineNumber must not be null")
+    @Min(value = 0, message = "lineNumber must be zero or positive")
+    private Integer lineNumber;
 
     @NotBlank(message = "message must not be blank")
     private String message;

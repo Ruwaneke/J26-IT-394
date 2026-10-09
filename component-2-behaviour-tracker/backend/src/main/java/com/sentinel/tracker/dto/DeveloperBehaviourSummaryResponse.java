@@ -13,7 +13,7 @@ public class DeveloperBehaviourSummaryResponse {
     private Long developerId;
     private Long totalSecurityEvents;
     
-    // Interaction counts
+    // Interaction counts (distinct security events that received the action)
     private Long openedCount;
     private Long fixedCount;
     private Long ignoredCount;
@@ -24,6 +24,7 @@ public class DeveloperBehaviourSummaryResponse {
     private Double fixRate;
     private Double ignoreRate;
     private Double reopenRate;
+    /** Null when the developer has no HIGH/CRITICAL security events (not applicable). */
     private Double highSeverityFixRate;
     
     private Double averageResponseTimeSeconds;
