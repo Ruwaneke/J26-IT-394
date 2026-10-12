@@ -246,20 +246,6 @@ implemented as the component contracts mature.
 - Commit verified daily progress to the relevant Git branch.
 - Confirm before committing and pushing milestone work.
 
-## Component 3 milestone schedule
-
-| Date | Deliverable |
-|---|---|
-| October 12 | Spring Boot setup and project structure |
-| October 13 | `SecurityEvent`, `BehaviourHistory` and `FeedbackResponse` models |
-| October 14 | Severity-scoring rules and implementation |
-| October 15 | Feedback escalation engine |
-| October 16 | Secure-coding recommendation templates |
-| October 17 | Personalised recommendation generator |
-| October 18 | Main feedback engine integration |
-| October 19 | REST API development and testing |
-| October 20 | Unit testing, bug fixing and milestone demonstration |
-
 ## Contribution history recorded in Git
 
 The repository history currently records the following major contributions:
@@ -277,13 +263,6 @@ This summary reflects the commits and files currently visible in the
 repository. It is not a replacement for the team's individual contribution
 log.
 
-## Branches
-
-The active Component 3 work is maintained on:
-
-```text
-Component-3
-```
 
 The repository also contains `main`, `feature/component-2-backend-foundation`,
 `feature/analytics` and `hishen` branches.
