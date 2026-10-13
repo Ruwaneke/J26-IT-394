@@ -1,0 +1,106 @@
+# Component 4 pipeline configuration.
+# Every simulator assumption lives here so it can be stated, changed and defended.
+# See ml/README.md for the reasoning behind each value.
+
+seed: 42
+
+paths:
+  events: data/raw/events.jsonl
+  sessions: data/raw/sessions.jsonl
+  developers: data/raw/developers.csv        # simulator ground truth, sanity checks only
+  developer_weeks: data/processed/developer_weeks.csv
+  developer_week_trends: data/processed/developer_week_trends.csv
+  developer_trends: data/processed/developer_trends.csv
+  team_weeks: data/processed/team_weeks.csv
+  analytics: outputs/analytics.json
+
+study:
+  start_date: "2026-06-01"   # a Monday; week 1 starts here
+  n_weeks: 16
+
+vulnerability_types: [SQL_INJECTION, XSS, HARDCODED_SECRET, COMMAND_INJECTION]
+severity_weights: {LOW: 1, MEDIUM: 2, HIGH: 3}
+
+features:
+  repeat_lookback_weeks: 2    # an event is a "repeat" if its type was seen in the previous N weeks
+
+trends:
+  moving_average_window: 4
+  slope_window: 4
+  slope_min_points: 3
+  direction_threshold: 0.02   # |slope of intro rate per session per week| below this = "stable"
+
+simulation:
+  n_developers: 60
+  archetype_mix: {improving: 0.30, stagnant: 0.30, worsening: 0.20, erratic: 0.20}
+
+  # Activity
+  p_inactive_week: 0.08          # chance a developer has no sessions in a given week
+  sessions_per_week_mean: 4.0    # sessions ~ 1 + Poisson(mean - 1) in active weeks
+  workday_start_hour: 9
+  workday_end_hour: 18
+
+  # Vulnerability introduction rate (detections per session), lambda(t) with t in [0, 1]
+  base_rate_median: 1.2          # per-developer base drawn from lognormal around this
+  base_rate_sigma: 0.35
+  rate_change: 0.6               # improving: base*(1 - 0.6t); worsening: base*(1 + 0.6t)
+  weekly_rate_noise_sigma: 0.25  # multiplicative lognormal week-to-week noise
+  erratic_walk_sigma: 0.35       # AR(1) step sd on log(rate) for erratic developers
+  erratic_ar_phi: 0.7            # AR(1) persistence; stationary sd = sigma / sqrt(1 - phi^2)
+
+  # Fix propensity p_fix(t): linear from start to end, plus per-developer jitter
+  fix_propensity:
+    improving: [0.45, 0.85]
+    stagnant: [0.55, 0.55]
+    worsening: [0.60, 0.30]
+    erratic: [0.55, 0.55]        # erratic adds a random walk on top
+  fix_jitter_sd: 0.06
+  erratic_fix_walk_sd: 0.08
+
+  # Share of the non-fixed remainder that is IGNORED (the rest is DISMISSED)
+  ignore_share:
+    improving: [0.55, 0.35]
+    stagnant: [0.50, 0.50]
+    worsening: [0.45, 0.75]
+    erratic: [0.50, 0.50]
+  false_positive_rate_beta: [2, 28]   # per-developer FP rate ~ Beta(2, 28), mean ~0.067
+
+  # Response time (seconds), lognormal: median(t) linear from start to end
+  response_median_sec:
+    improving: [600, 240]
+    stagnant: [450, 450]
+    worsening: [300, 900]
+    erratic: [450, 450]
+  response_sigma: 0.8
+  quick_action_factor: 0.3       # IGNORED / DISMISSED / FALSE_POSITIVE are faster than a fix
+
+  # Repeat propensity: chance a new detection re-uses a type seen in the last 2 weeks
+  repeat_propensity:
+    improving: [0.50, 0.20]
+    stagnant: [0.40, 0.40]
+    worsening: [0.35, 0.65]
+    erratic: [0.40, 0.40]
+
+  # Vulnerability-type mix: per-developer Dirichlet around the global mix
+  type_mix: {SQL_INJECTION: 0.35, XSS: 0.30, HARDCODED_SECRET: 0.20, COMMAND_INJECTION: 0.15}
+  type_mix_concentration: 8.0
+
+  # Severity distribution per type: [LOW, MEDIUM, HIGH]
+  severity_by_type:
+    SQL_INJECTION: [0.10, 0.30, 0.60]
+    XSS: [0.20, 0.50, 0.30]
+    HARDCODED_SECRET: [0.15, 0.35, 0.50]
+    COMMAND_INJECTION: [0.05, 0.25, 0.70]
+
+  # Detector confidence ~ Beta(a, b) by severity
+  confidence_beta:
+    LOW: [5, 3]
+    MEDIUM: [7, 2.5]
+    HIGH: [9, 1.5]
+
+  file_names:
+    SQL_INJECTION: [UserRepository.java, OrderDao.cs, reports.py, db.ts]
+    XSS: [ProfileView.tsx, comments.js, template.html, SearchPage.jsx]
+    HARDCODED_SECRET: [config.py, AppSettings.cs, client.ts, application.properties]
+    COMMAND_INJECTION: [backup.py, Deploy.java, exec_utils.js, Tools.cs]
+  max_line_number: 400
