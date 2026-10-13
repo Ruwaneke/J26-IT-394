@@ -2,28 +2,28 @@ package com.sentinel.tracker.service;
 
 import com.sentinel.tracker.dto.BehaviourLogResponse;
 import com.sentinel.tracker.dto.CreateBehaviourLogRequest;
-import com.sentinel.tracker.dto.CreateDeveloperInteractionRequest;
-import com.sentinel.tracker.dto.DeveloperInteractionResponse;
 
 import java.util.List;
 
 /**
  * Service contract for BehaviourLog management operations.
+ *
+ * Writes go through {@link DeveloperInteractionService}; this service keeps the
+ * legacy behaviour-log read model and the deprecated create operation.
  */
 public interface BehaviourLogService {
 
     /**
      * Record a new developer behaviour log entry.
+     *
+     * @deprecated Use {@link DeveloperInteractionService#createInteraction}. This method
+     * delegates to it, so the security event status, lifecycle history and response time
+     * are updated exactly as for a developer interaction.
      * Throws {@link com.sentinel.tracker.exception.ResourceNotFoundException} if the
      * referenced developer or security event does not exist.
      */
+    @Deprecated
     BehaviourLogResponse createBehaviourLog(CreateBehaviourLogRequest request);
-
-    /**
-     * Phase 03: Create a developer interaction tracking log, which also updates
-     * the SecurityEvent lifecycle status automatically.
-     */
-    DeveloperInteractionResponse createInteraction(CreateDeveloperInteractionRequest request);
 
     /**
      * Retrieve a behaviour log by its database ID.
@@ -40,14 +40,4 @@ public interface BehaviourLogService {
      * Retrieve all behaviour logs.
      */
     List<BehaviourLogResponse> getAllBehaviourLogs();
-
-    // ── Phase 03 Interaction Retrieval ────────────────────────────────────────
-
-    DeveloperInteractionResponse getInteractionById(Long id);
-
-    List<DeveloperInteractionResponse> getAllInteractions();
-
-    List<DeveloperInteractionResponse> getInteractionsByDeveloper(Long developerId);
-
-    List<DeveloperInteractionResponse> getInteractionsBySecurityEvent(Long securityEventId);
 }
