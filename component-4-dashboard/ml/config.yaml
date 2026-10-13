@@ -70,6 +70,40 @@ forecast:
     forecasts: outputs/forecasts.json
     tuning: outputs/forecast_tuning.csv
 
+risk:
+  origins: [6, 7, 8, 9, 10, 11, 12]   # features from weeks <= t, label from weeks t+1..t+4
+  label_weeks: 4
+  persistence_weeks: 4                # persistence baseline: same score on weeks t-3..t
+  score_weights:                      # future risk score (higher = riskier behaviour)
+    severity_weighted_ignore_rate: 0.4
+    one_minus_fix_rate: 0.3
+    normalised_repeat_rate: 0.2
+    normalised_log_response_time: 0.1
+  threshold_percentiles: [40, 80]     # used once (--fit-thresholds) on TRAIN-developer label scores
+  thresholds:                         # frozen once from the train-score distribution (seed 42 data)
+    medium: 0.3215                    # 40th percentile
+    high: 0.4660                      # 80th percentile
+  fix_rate_rule:                      # proposal baseline: fix rate < 0.5 HIGH, < 0.75 MEDIUM, else LOW
+    high_below: 0.5
+    medium_below: 0.75
+  holdout_developers: 12              # stratified by archetype (split only), final test set
+  cv_folds: 5                         # GroupKFold by developer on the other 48
+  inner_val_fraction: 0.2             # developers held out inside a training fold for early stopping
+  early_stopping_rounds: 20
+  grid:
+    max_depth: [2, 3, 4]
+    n_estimators: [100, 300]
+    learning_rate: [0.05, 0.1]
+    min_child_weight: [1, 5]
+  logreg_C: [0.1, 1.0, 10.0]
+  bootstrap_reps: 2000
+  quick:
+    bootstrap_reps: 200
+  outputs:
+    risk: outputs/risk.json
+    metrics: outputs/risk_metrics.json
+    tuning: outputs/risk_tuning.csv
+
 simulation:
   n_developers: 60
   archetype_mix: {improving: 0.30, stagnant: 0.30, worsening: 0.20, erratic: 0.20}
