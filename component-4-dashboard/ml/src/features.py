@@ -18,6 +18,10 @@ Design choices
   the narrower (type, file) key.
 - severity_weighted_load = sum of severity weights (LOW=1, MEDIUM=2, HIGH=3),
   so one HIGH detection weighs as much as three LOW ones.
+  ignored_severity_load is the same sum over IGNORED events only, so
+  ignored_severity_load / severity_weighted_load is a severity-weighted ignore
+  rate (ignoring a HIGH finding counts three times as much as a LOW one).
+- n_high_severity counts HIGH detections.
 - intro_rate_per_session = detections / sessions. Sessions come from
   sessions.jsonl when available. If not, only sessions that appear in events
   can be counted, which hides clean sessions and biases the rate upward; a
@@ -77,6 +81,8 @@ def build_developer_weeks(events, cfg, sessions=None):
     ev["is_repeat"] = _repeat_flags(ev, ["vulnerabilityType", "fileName"], cfg["features"]["repeat_lookback_weeks"])
     ev["is_type_repeat"] = _repeat_flags(ev, ["vulnerabilityType"], cfg["features"]["repeat_type_lookback_weeks"])
     ev["severity_weight"] = ev["severity"].map(weights)
+    ev["is_high"] = ev["severity"] == "HIGH"
+    ev["ignored_weight"] = ev["severity_weight"].where(ev["action"] == "IGNORED", 0)
 
     developers = set(ev["developerId"])
     if sessions is not None:
@@ -104,13 +110,16 @@ def build_developer_weeks(events, cfg, sessions=None):
     out["repeat_count"] = g["is_repeat"].sum()
     out["n_type_repeats"] = g["is_type_repeat"].sum()
     out["severity_weighted_load"] = g["severity_weight"].sum()
+    out["ignored_severity_load"] = g["ignored_weight"].sum()
+    out["n_high_severity"] = g["is_high"].sum()
     types = ev.pivot_table(index=["developerId", "week"], columns="vulnerabilityType",
                            values="eventId", aggfunc="count")
     for vtype in vtypes:
         out[type_column(vtype)] = types[vtype] if vtype in types else 0
 
     count_cols = ["n_sessions", "vuln_count", *ACTION_COLUMNS.values(), "repeat_count", "n_type_repeats",
-                  "severity_weighted_load", *(type_column(v) for v in vtypes)]
+                  "severity_weighted_load", "ignored_severity_load", "n_high_severity",
+                  *(type_column(v) for v in vtypes)]
     out[count_cols] = out[count_cols].fillna(0).astype(int)
 
     has_events = out["vuln_count"] > 0

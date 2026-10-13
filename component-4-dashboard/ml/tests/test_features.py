@@ -30,6 +30,8 @@ def test_week_with_events(tiny_events, tiny_sessions, tiny_cfg):
     assert r["false_positive_rate"] == pytest.approx(1 / 3)
     assert r["avg_response_time"] == pytest.approx(50.0)
     assert r["severity_weighted_load"] == 3 + 1 + 2
+    assert r["ignored_severity_load"] == 1          # only the LOW XSS was ignored
+    assert r["n_high_severity"] == 1
     assert r["count_sql_injection"] == 2 and r["count_xss"] == 1
     assert r["repeat_count"] == 0          # same-week repeats do not count
     assert r["repeat_type_rate"] == 0.0
@@ -50,6 +52,7 @@ def test_repeat_within_lookback(tiny_events, tiny_sessions, tiny_cfg):
     assert r["vuln_count"] == 3
     assert r["repeat_count"] == 1          # only (SQLi, a.py) was flagged before
     assert r["repeat_type_rate"] == pytest.approx(2 / 3)   # both SQLi events repeat the type
+    assert r["n_high_severity"] == 2 and r["ignored_severity_load"] == 1
     assert r["fix_rate"] == pytest.approx(1 / 3)
     assert r["avg_response_time"] == pytest.approx(100.0)
     assert r["intro_rate_per_session"] == pytest.approx(3.0)
