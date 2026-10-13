@@ -1,0 +1,26 @@
+# Local-only notes, never committed
+PLAN.md
+ml/VIVA_NOTES.md
+
+# Python
+ml/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated data and models (regenerate with the pipeline)
+ml/data/raw/*
+ml/data/processed/*
+ml/outputs/*
+ml/models/
+!ml/data/raw/.gitkeep
+!ml/data/processed/.gitkeep
+!ml/outputs/.gitkeep
+!ml/outputs/analytics.sample.json
+
+# Node
+node_modules/
+frontend/dist/
+extension/out/
+extension/media/
+*.vsix
