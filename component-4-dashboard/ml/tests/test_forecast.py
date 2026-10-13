@@ -103,15 +103,45 @@ def test_baselines(cfg):
     assert b["linear"][0] == pytest.approx([5, 6, 1.0, 1.0])  # fix 1.0, 1.2 clipped to 1
 
 
-def test_training_is_seeded_and_clipped(cfg):
+@pytest.mark.parametrize("mode", ["raw", "residual"])
+def test_training_is_seeded_and_clipped(cfg, mode):
     panel = build_panel(synthetic_dw(), cfg, 9)
-    std = Standardiser(panel, 9, 2)
     train_o, val_o, test_o = split_origins(cfg, 4, 16)
     tr, va, te = (make_windows(panel, 4, 2, o) for o in (train_o, val_o, test_o))
+    std = Standardiser(panel, 9, 2, mode, tr)
     tcfg = dict(cfg["forecast"]["training"], max_epochs=3, patience=2)
-    preds = [predict(train_model(tr, std, "gru", 8, 0.1, tcfg, seed=1, val_w=va)[0], te.X, std, 2)
+    preds = [predict(train_model(tr, std, "gru", 8, 0.1, tcfg, seed=1, val_w=va)[0], te, std)
              for _ in range(2)]
     assert np.array_equal(preds[0], preds[1])
     assert preds[0].shape == (len(te.X), 4)
     assert (preds[0][:, :2] >= 0).all()
     assert ((preds[0][:, 2:] >= 0) & (preds[0][:, 2:] <= 1)).all()
+
+
+def test_residual_mode_adds_the_4_week_mean(cfg):
+    panel = build_panel(synthetic_dw(), cfg, 9)
+    tr = make_windows(panel, 4, 2, split_origins(cfg, 4, 16)[0])
+    std = Standardiser(panel, 9, 2, "residual", tr)
+    zero_residual = (0 - std.y_mean) / std.y_sd          # network output meaning "residual = 0"
+    P = std.prediction(np.tile(zero_residual, (len(tr.X), 1)), tr)
+    assert np.allclose(P[:, :2], np.clip(tr.base[:, :2], 0, None))
+    assert np.allclose(P[:, 2:], np.clip(tr.base[:, 2:], 0, 1))
+    # training target is the standardised residual
+    expected = (tr.Y - tr.base - std.y_mean) / std.y_sd
+    assert np.allclose(std.target(tr)[tr.M == 1], expected[tr.M == 1])
+
+
+def test_fixed_step_refit(cfg):
+    panel = build_panel(synthetic_dw(), cfg, 16)
+    w = make_windows(panel, 4, 2, range(4, 15))
+    std = Standardiser(panel, 16, 2)
+    tcfg = dict(cfg["forecast"]["training"], batch_size=16)
+    _, epoch, _ = train_model(w, std, "gru", 8, 0.1, tcfg, seed=0, max_steps=10)
+    steps_per_epoch = int(np.ceil(len(w.X) / 16))
+    assert epoch == int(np.ceil(10 / steps_per_epoch))
+
+
+def test_future_window_has_masked_targets(cfg):
+    panel = build_panel(synthetic_dw(), cfg, 16)
+    w = make_windows(panel, 4, 2, [16], require_targets=False)
+    assert len(w.X) == 6 and w.M.sum() == 0

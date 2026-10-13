@@ -20,6 +20,17 @@ and a linear layer that outputs the 4 standardised predictions.
 Predictions are converted back to original units and clipped to valid ranges
 (counts >= 0, fix_rate in [0, 1]).
 
+Target mode
+-----------
+raw:      the network predicts the targets directly.
+residual: the network predicts the difference from each target's 4-week mean;
+          final prediction = 4-week mean + predicted residual (then clipped).
+          The 4-week mean was the strongest baseline, so the network only has to
+          learn when and how far to depart from it. This mode was added after
+          the first test results were seen (post-hoc). Raw vs residual, and the
+          deployed variant, are chosen on validation only, using one common
+          score (see common_scale_loss).
+
 Missing data
 ------------
 - Inactive weeks (and active weeks with no detections) leave fix_rate,
@@ -67,6 +78,9 @@ FILLED_INPUTS = ["fix_rate", "ignore_rate", "log_response_time"]
 TARGET_NAMES = {"vuln_count": "vulnCount", "fix_rate": "fixRate"}
 SIMULATED_NOTE = "Simulated data generated from stated assumptions; not real developer data."
 BAND_NOTE = "seed spread, not a calibrated confidence interval"
+ARCHETYPE_NOTE = "diagnostic, simulated data only"
+RESIDUAL_NOTE = ("The residual target mode was added after the first test results were seen (post-hoc); "
+                 "raw vs residual is still selected on validation only.")
 
 torch.set_num_threads(1)  # small model; one thread keeps runs reproducible across machines
 
@@ -114,25 +128,47 @@ class Windows:
     X: np.ndarray       # (N, L, F) inputs
     Y: np.ndarray       # (N, 2H) targets [vuln t+1..t+H, fix t+1..t+H], 0 where masked
     M: np.ndarray       # (N, 2H) 1 = valid target, 0 = masked
+    base: np.ndarray    # (N, 2H) 4-week mean of each target at the origin (residual mode and mean4 baseline)
     dev: np.ndarray     # (N,) developer index
     origin: np.ndarray  # (N,) origin week t (1-based, last input week)
 
 
-def make_windows(panel, window, horizon, origins):
-    """Slide over each developer: inputs weeks t-L+1..t, targets weeks t+1..t+H."""
+def mean4_level(panel, d, t):
+    """Mean of the defined values in weeks t-3..t for (vuln_count, fix_rate).
+
+    Falls back to the last known value when the 4 weeks have none.
+    """
+    last4 = slice(max(0, t - 4), t)
+    out = []
+    for series, carried in [(panel.target_vuln, panel.vuln_carried), (panel.target_fix, panel.fix_carried)]:
+        values = series[d, last4]
+        out.append(np.nanmean(values) if (~np.isnan(values)).any() else carried[d, t - 1])
+    return np.array(out)
+
+
+def make_windows(panel, window, horizon, origins, require_targets=True):
+    """Slide over each developer: inputs weeks t-L+1..t, targets weeks t+1..t+H.
+
+    With require_targets=False, origins whose target weeks lie beyond the data
+    are kept with fully masked targets (used for the future forecast).
+    """
     n_dev, n_weeks, _ = panel.inputs.shape
-    X, Y, dev, org = [], [], [], []
+    X, Y, base, dev, org = [], [], [], [], []
     for d in range(n_dev):
         for t in origins:
-            if t < window or t + horizon > n_weeks:
+            if t < window or (require_targets and t + horizon > n_weeks):
                 continue
             X.append(panel.inputs[d, t - window:t])
-            Y.append(np.concatenate([panel.target_vuln[d, t:t + horizon], panel.target_fix[d, t:t + horizon]]))
+            pad = np.full(max(0, t + horizon - n_weeks), np.nan)
+            Y.append(np.concatenate([panel.target_vuln[d, t:t + horizon], pad,
+                                     panel.target_fix[d, t:t + horizon], pad]))
+            base.append(np.repeat(mean4_level(panel, d, t), horizon))
             dev.append(d)
             org.append(t)
     Y = np.array(Y, dtype=float)
     M = (~np.isnan(Y)).astype(float)
-    return Windows(np.array(X, dtype=float), np.nan_to_num(Y), M, np.array(dev), np.array(org))
+    return Windows(np.array(X, dtype=float), np.nan_to_num(Y), M, np.array(base, dtype=float),
+                   np.array(dev), np.array(org))
 
 
 def split_origins(cfg, window, n_weeks):
@@ -148,25 +184,61 @@ def target_weeks(origins, horizon):
 
 
 class Standardiser:
-    """z = (x - mean) / sd with mean and sd taken from train-period weeks only."""
+    """z = (x - mean) / sd with mean and sd taken from TRAIN data only.
 
-    def __init__(self, panel, stats_max_week, horizon):
+    target_mode decides what the network learns:
+      raw:      the targets themselves (stats from train-period weeks);
+      residual: target minus its 4-week mean at the origin (stats from the
+                residuals of the train windows). The final prediction adds the
+                4-week mean back, so the network only has to learn the change.
+    """
+
+    def __init__(self, panel, stats_max_week, horizon, target_mode="raw", train_w=None):
         w = stats_max_week
+        self.mode, self.horizon = target_mode, horizon
         x = panel.inputs[:, :w].reshape(-1, panel.inputs.shape[-1])
         self.x_mean, self.x_sd = x.mean(0), x.std(0)
         self.x_sd[self.x_sd == 0] = 1.0
-        tv, tf = panel.target_vuln[:, :w], panel.target_fix[:, :w]
-        self.y_mean = np.repeat([np.nanmean(tv), np.nanmean(tf)], horizon)
-        self.y_sd = np.repeat([np.nanstd(tv), np.nanstd(tf)], horizon)
+        if target_mode == "raw":
+            tv, tf = panel.target_vuln[:, :w], panel.target_fix[:, :w]
+            stats = [(np.nanmean(tv), np.nanstd(tv)), (np.nanmean(tf), np.nanstd(tf))]
+        else:
+            resid = train_w.Y - train_w.base
+            stats = []
+            for ti in range(2):
+                cols = slice(ti * horizon, (ti + 1) * horizon)
+                r = resid[:, cols][train_w.M[:, cols].astype(bool)]
+                stats.append((r.mean(), r.std()))
+        self.y_mean = np.repeat([m for m, _ in stats], horizon)
+        self.y_sd = np.repeat([s for _, s in stats], horizon)
 
     def x(self, X):
         return (X - self.x_mean) / self.x_sd
 
-    def y(self, Y):
-        return (Y - self.y_mean) / self.y_sd
+    def _offset(self, w):
+        return w.base if self.mode == "residual" else 0.0
 
-    def y_inverse(self, Z):
-        return Z * self.y_sd + self.y_mean
+    def target(self, w):
+        """Standardised training target for windows w."""
+        return (w.Y - self._offset(w) - self.y_mean) / self.y_sd
+
+    def prediction(self, Z, w):
+        """Network output -> prediction in original units, clipped to valid ranges."""
+        return clip_predictions(Z * self.y_sd + self.y_mean + self._offset(w), self.horizon)
+
+
+def common_scale_loss(P, w, raw_std, delta):
+    """Masked Huber of final predictions, standardised with the RAW train statistics.
+
+    Raw and residual models standardise their targets differently, so their
+    own training losses cannot be compared. This puts every candidate on one
+    scale; it is the score used for all model selection on validation.
+    """
+    zp = (P - raw_std.y_mean) / raw_std.y_sd
+    zy = (w.Y - raw_std.y_mean) / raw_std.y_sd
+    e = np.abs(zp - zy)
+    huber = np.where(e <= delta, 0.5 * e ** 2, delta * (e - 0.5 * delta))
+    return float((huber * w.M).sum() / max(w.M.sum(), 1.0))
 
 
 def clip_predictions(P, horizon):
@@ -205,15 +277,21 @@ def masked_huber(pred, target, mask, delta):
 
 def _tensors(w, std):
     return (torch.tensor(std.x(w.X), dtype=torch.float32),
-            torch.tensor(std.y(w.Y) * w.M, dtype=torch.float32),
+            torch.tensor(np.nan_to_num(std.target(w)) * w.M, dtype=torch.float32),
             torch.tensor(w.M, dtype=torch.float32))
 
 
-def train_model(train_w, std, cell, hidden, dropout, tcfg, seed, val_w=None, epochs=None):
+def steps_per_epoch(n_windows, batch_size):
+    return int(np.ceil(n_windows / batch_size))
+
+
+def train_model(train_w, std, cell, hidden, dropout, tcfg, seed, val_w=None, max_steps=None):
     """Train with AdamW and gradient clipping.
 
     With val_w: early stopping on validation loss (patience), restoring the best
-    weights. Without it: train for a fixed number of epochs (deployment refit).
+    weights. Without it: train for exactly max_steps gradient steps (deployment
+    refit). Steps, not epochs, are fixed because the refit has more windows per
+    epoch; the same number of epochs would mean many more updates.
     Returns (model, best_epoch, best_val_loss).
     """
     torch.manual_seed(seed)
@@ -223,8 +301,8 @@ def train_model(train_w, std, cell, hidden, dropout, tcfg, seed, val_w=None, epo
     gen = torch.Generator().manual_seed(seed)
     val = _tensors(val_w, std) if val_w is not None else None
 
-    best_loss, best_state, best_epoch, wait = float("inf"), None, 0, 0
-    for epoch in range(1, (epochs or tcfg["max_epochs"]) + 1):
+    best_loss, best_state, best_epoch, wait, steps = float("inf"), None, 0, 0, 0
+    for epoch in range(1, tcfg["max_epochs"] + 1):
         model.train()
         for idx in torch.randperm(len(Xt), generator=gen).split(tcfg["batch_size"]):
             loss = masked_huber(model(Xt[idx]), Yt[idx], Mt[idx], tcfg["huber_delta"])
@@ -232,6 +310,9 @@ def train_model(train_w, std, cell, hidden, dropout, tcfg, seed, val_w=None, epo
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), tcfg["grad_clip"])
             opt.step()
+            steps += 1
+            if max_steps is not None and steps >= max_steps:
+                return model, epoch, float("nan")
         if val is None:
             continue
         model.eval()
@@ -245,14 +326,14 @@ def train_model(train_w, std, cell, hidden, dropout, tcfg, seed, val_w=None, epo
                 break
     if best_state is not None:
         model.load_state_dict(best_state)
-    return model, best_epoch or epochs, best_loss
+    return model, best_epoch, best_loss
 
 
-def predict(model, X, std, horizon):
+def predict(model, w, std):
     model.eval()
     with torch.no_grad():
-        Z = model(torch.tensor(std.x(X), dtype=torch.float32)).numpy()
-    return clip_predictions(std.y_inverse(Z), horizon)
+        Z = model(torch.tensor(std.x(w.X), dtype=torch.float32)).numpy()
+    return std.prediction(Z, w)
 
 
 # ---------------------------------------------------------------- baselines
@@ -270,9 +351,7 @@ def baseline_predictions(panel, windows, window, horizon):
     preds = {"naive": [], "mean4": [], "linear": []}
     for d, t in zip(windows.dev, windows.origin):
         naive = np.array([panel.vuln_carried[d, t - 1], panel.fix_carried[d, t - 1]])
-        last4 = slice(max(0, t - 4), t)
-        mean4 = np.array([np.nanmean(panel.target_vuln[d, last4]) if (~np.isnan(panel.target_vuln[d, last4])).any() else naive[0],
-                          np.nanmean(panel.target_fix[d, last4]) if (~np.isnan(panel.target_fix[d, last4])).any() else naive[1]])
+        mean4 = mean4_level(panel, d, t)
         weeks = np.arange(t - window + 1, t + 1, dtype=float)
         future = np.arange(t + 1, t + horizon + 1)
         linear = []
@@ -375,25 +454,31 @@ def _mean_std(values):
 
 # ---------------------------------------------------------------- pipeline
 
-def tune(panel, std, cfg, cell, grid, tcfg, n_weeks, log):
-    """Grid search on VALIDATION loss (mean over tuning seeds). Test windows are never built here."""
+def tune(panel, raw_std, cfg, cell, mode, grid, tcfg, n_weeks, log):
+    """Grid search scored on VALIDATION only (mean over tuning seeds). Test windows are never built here.
+
+    The score is common_scale_loss, so raw and residual candidates are comparable.
+    """
     h = cfg["forecast"]["horizon"]
+    stats_week = cfg["forecast"]["split"]["train_max_target_week"]
+    delta = tcfg["huber_delta"]
     best = None
     for hidden, window, dropout in grid:
         train_o, val_o, _ = split_origins(cfg, window, n_weeks)
         tr, va = make_windows(panel, window, h, train_o), make_windows(panel, window, h, val_o)
-        losses, epochs = [], []
+        std = Standardiser(panel, stats_week, h, mode, tr)
+        scores, epochs = [], []
         for seed in tcfg["tuning_seeds"]:
-            _, ep, loss = train_model(tr, std, cell, hidden, dropout, tcfg, seed, val_w=va)
-            losses.append(loss)
+            model, ep, _ = train_model(tr, std, cell, hidden, dropout, tcfg, seed, val_w=va)
+            scores.append(common_scale_loss(predict(model, va, std), va, raw_std, delta))
             epochs.append(ep)
-        row = {"cell": cell, "hidden": hidden, "window": window, "dropout": dropout,
-               "val_loss_mean": float(np.mean(losses)), "val_loss_std": float(np.std(losses)),
+        row = {"cell": cell, "target_mode": mode, "hidden": hidden, "window": window, "dropout": dropout,
+               "val_score_mean": float(np.mean(scores)), "val_score_std": float(np.std(scores)),
                "best_epoch_mean": float(np.mean(epochs)), "n_train": len(tr.X), "n_val": len(va.X)}
         log.append(row)
-        print(f"  tune {cell} hidden={hidden} L={window} dropout={dropout}: "
-              f"val loss {row['val_loss_mean']:.4f} +/- {row['val_loss_std']:.4f}")
-        if best is None or row["val_loss_mean"] < best["val_loss_mean"]:
+        print(f"  tune {cell}/{mode} hidden={hidden} L={window} dropout={dropout}: "
+              f"val {row['val_score_mean']:.4f} +/- {row['val_score_std']:.4f}")
+        if best is None or row["val_score_mean"] < best["val_score_mean"]:
             best = row
     return best
 
@@ -417,76 +502,86 @@ def run(quick=False):
     archetypes = pd.read_csv(resolve(cfg["paths"]["developers"])).set_index("developerId")["archetype"].to_dict()
 
     panel = build_panel(dw, cfg, stats_week)
-    std = Standardiser(panel, stats_week, h)
+    raw_std = Standardiser(panel, stats_week, h, "raw")
 
-    # 1. Tune each cell on validation
+    # 1. Tune every (cell, target mode) variant on validation
     tuning_log, selected = [], {}
     for cell in fc["model"]["cells"]:
-        selected[cell] = tune(panel, std, cfg, cell, grid, tcfg, n_weeks, tuning_log)
+        for mode in fc["model"]["target_modes"]:
+            selected[f"{cell}_{mode}"] = tune(panel, raw_std, cfg, cell, mode, grid, tcfg, n_weeks, tuning_log)
 
-    # 2. Final models: several seeds with the selected settings, evaluated once on test
+    # 2. Final models: several seeds per variant with the selected settings, evaluated once on test
     _, _, test_o = split_origins(cfg, fc["window"], n_weeks)
     test_ref = make_windows(panel, fc["window"], h, test_o)
     Y, M = test_ref.Y, test_ref.M
     baselines = baseline_predictions(panel, test_ref, fc["window"], h)
 
     metrics, ensembles, seed_preds, best_epochs = [], {}, {}, {}
-    for cell, sel in selected.items():
+    for name, sel in selected.items():
         L = sel["window"]
         train_o, val_o, test_o = split_origins(cfg, L, n_weeks)
         tr, va, te = (make_windows(panel, L, h, o) for o in (train_o, val_o, test_o))
         assert np.array_equal(te.dev, test_ref.dev) and np.array_equal(te.origin, test_ref.origin)
+        std = Standardiser(panel, stats_week, h, sel["target_mode"], tr)
         per_seed, preds, eps = [], [], []
         for seed in tcfg["seeds"]:
-            model, ep, _ = train_model(tr, std, cell, sel["hidden"], sel["dropout"], tcfg, seed, val_w=va)
-            P = predict(model, te.X, std, h)
+            model, ep, _ = train_model(tr, std, sel["cell"], sel["hidden"], sel["dropout"], tcfg, seed, val_w=va)
+            P = predict(model, te, std)
             preds.append(P)
             eps.append(ep)
             per_seed.append(metric_rows(Y, M, P, h, targets))
         for i, row in enumerate(per_seed[0]):
-            metrics.append({"model": cell, "target": row["target"], "horizon": row["horizon"],
+            metrics.append({"model": name, "target": row["target"], "horizon": row["horizon"],
                             **{k: _mean_std([s[i][k] for s in per_seed]) for k in ("mae", "rmse", "smape")}})
-        seed_preds[cell] = np.stack(preds)
-        ensembles[cell] = seed_preds[cell].mean(0)
-        best_epochs[cell] = eps
+        seed_preds[name] = np.stack(preds)
+        ensembles[name] = seed_preds[name].mean(0)
+        best_epochs[name] = eps
 
-    for name, P in {**{f"{c}_ensemble": P for c, P in ensembles.items()}, **baselines}.items():
+    ens = {f"{n}_ensemble": P for n, P in ensembles.items()}
+    for name, P in {**ens, **baselines}.items():
         for row in metric_rows(Y, M, P, h, targets):
             metrics.append({"model": name, "target": row["target"], "horizon": row["horizon"],
                             **{k: {"mean": row[k], "std": 0.0} for k in ("mae", "rmse", "smape")}})
 
     wil = []
-    for cell, P in ensembles.items():
-        wil += wilcoxon_rows(f"{cell}_ensemble", P, baselines, Y, M, test_ref.dev, h, targets)
-    arch = archetype_rows({**{f"{c}_ensemble": P for c, P in ensembles.items()}, **baselines},
-                          Y, M, test_ref.dev, panel, archetypes, h, targets)
+    for name, P in ens.items():
+        wil += wilcoxon_rows(name, P, baselines, Y, M, test_ref.dev, h, targets)
+    arch = archetype_rows({**ens, **baselines}, Y, M, test_ref.dev, panel, archetypes, h, targets)
 
-    # 3. Deployment: refit the cell with the better VALIDATION loss on all data, forecast weeks 17-18
-    deployed = min(selected, key=lambda c: selected[c]["val_loss_mean"])
+    # 3. Deployment: the variant with the best VALIDATION score is refit on all data
+    #    for the same number of gradient steps it needed on validation, then forecasts weeks 17-18.
+    deployed = min(selected, key=lambda n: selected[n]["val_score_mean"])
     sel = selected[deployed]
-    fixed_epochs = int(np.median(best_epochs[deployed]))
+    L = sel["window"]
+    n_train = len(make_windows(panel, L, h, split_origins(cfg, L, n_weeks)[0]).X)
+    fixed_steps = int(np.median([e * steps_per_epoch(n_train, tcfg["batch_size"]) for e in best_epochs[deployed]]))
     panel_all = build_panel(dw, cfg, n_weeks)
-    std_all = Standardiser(panel_all, n_weeks, h)
-    all_w = make_windows(panel_all, sel["window"], h, range(sel["window"], n_weeks - h + 1))
-    X_future = panel_all.inputs[:, n_weeks - sel["window"]:n_weeks]
+    all_w = make_windows(panel_all, L, h, range(L, n_weeks - h + 1))
+    std_all = Standardiser(panel_all, n_weeks, h, sel["target_mode"], all_w)
+    future_w = make_windows(panel_all, L, h, [n_weeks], require_targets=False)
     future = np.stack([
-        predict(train_model(all_w, std_all, deployed, sel["hidden"], sel["dropout"], tcfg, seed,
-                            epochs=fixed_epochs)[0], X_future, std_all, h)
+        predict(train_model(all_w, std_all, sel["cell"], sel["hidden"], sel["dropout"], tcfg, seed,
+                            max_steps=fixed_steps)[0], future_w, std_all)
         for seed in tcfg["seeds"]])
 
     # 4. Write outputs
     split_info = {}
-    for name, origins in zip(("train", "validation", "test"), split_origins(cfg, fc["window"], n_weeks)):
-        split_info[name] = {"origins": origins, "targetWeeks": target_weeks(origins, h)}
+    for split, origins in zip(("train", "validation", "test"), split_origins(cfg, fc["window"], n_weeks)):
+        split_info[split] = {"origins": origins, "targetWeeks": target_weeks(origins, h)}
     metrics_out = {
         "meta": {"dataSource": "simulated", "disclaimer": SIMULATED_NOTE, "quick": quick,
                  "seeds": tcfg["seeds"], "horizon": h, "baselineWindow": fc["window"],
                  "split": split_info, "nTestWindows": int(len(Y)),
-                 "nTestTargets": {TARGET_NAMES[t]: int(M[:, i * h:(i + 1) * h].sum()) for i, t in enumerate(targets)}},
-        "selected": {c: {"hidden": s["hidden"], "window": s["window"], "dropout": s["dropout"],
-                         "valLoss": s["val_loss_mean"], "bestEpochs": best_epochs[c]} for c, s in selected.items()},
-        "deployedCell": deployed, "deploymentEpochs": fixed_epochs,
-        "metrics": metrics, "wilcoxon": wil, "archetypeMae": arch,
+                 "nTestTargets": {TARGET_NAMES[t]: int(M[:, i * h:(i + 1) * h].sum()) for i, t in enumerate(targets)},
+                 "selectionScore": "validation masked Huber on the raw-standardised scale (common to raw and residual)",
+                 "residualNote": RESIDUAL_NOTE},
+        "selected": {n: {"cell": s["cell"], "targetMode": s["target_mode"], "hidden": s["hidden"],
+                         "window": s["window"], "dropout": s["dropout"], "valScore": s["val_score_mean"],
+                         "bestEpochs": best_epochs[n]}
+                     for n, s in selected.items()},
+        "deployed": deployed, "deploymentSteps": fixed_steps,
+        "metrics": metrics, "wilcoxon": wil,
+        "archetypeMaeNote": ARCHETYPE_NOTE, "archetypeMae": arch,
     }
     _write_json(resolve(fc["outputs"]["metrics"]), metrics_out)
     _write_json(resolve(fc["outputs"]["forecasts"]),
@@ -537,7 +632,7 @@ def _forecasts_json(panel, dw, test_w, Y, M, ensembles, deployed_seed_preds, bas
             "test": test,
             "future": fut,
         })
-    return {"meta": {"dataSource": "simulated", "disclaimer": SIMULATED_NOTE, "deployedCell": deployed,
+    return {"meta": {"dataSource": "simulated", "disclaimer": SIMULATED_NOTE, "deployed": deployed,
                      "window": sel["window"], "horizon": h, "bandNote": BAND_NOTE},
             "developers": developers}
 
@@ -550,14 +645,14 @@ def _write_json(path, obj):
 
 def _print_summary(out):
     print("\nTest metrics (all horizons), SIMULATED data:")
-    print(f"{'model':16s} {'target':10s} {'MAE':>16s} {'RMSE':>16s} {'sMAPE':>16s}")
+    print(f"{'model':22s} {'target':10s} {'MAE':>16s} {'RMSE':>16s} {'sMAPE':>16s}")
     for r in out["metrics"]:
         if r["horizon"] == "all":
             cells = [f"{r[k]['mean']:.3f} +/- {r[k]['std']:.3f}" for k in ("mae", "rmse", "smape")]
-            print(f"{r['model']:16s} {r['target']:10s} " + " ".join(f"{c:>16s}" for c in cells))
+            print(f"{r['model']:22s} {r['target']:10s} " + " ".join(f"{c:>16s}" for c in cells))
     print("\nWilcoxon (per-developer MAE, model - baseline):")
     for r in out["wilcoxon"]:
-        print(f"  {r['model']:14s} vs {r['baseline']:6s} {r['target']:9s} "
+        print(f"  {r['model']:22s} vs {r['baseline']:6s} {r['target']:9s} "
               f"median diff {r['medianDiff']:+.3f}  p={r['pValue']:.4f}")
 
 

@@ -43,6 +43,8 @@ forecast:
   model:
     cells: [gru, lstm]            # both are trained and reported
     cell: gru                     # default cell for single-model use
+    target_modes: [raw, residual] # both are trained; validation picks the deployed one
+    target_mode: raw              # raw = predict targets; residual = predict change from the 4-week mean
     hidden: 32
     dropout: 0.1
   grid:                           # tuned on VALIDATION only
