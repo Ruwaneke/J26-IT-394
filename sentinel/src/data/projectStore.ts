@@ -418,6 +418,30 @@ export class ProjectStore {
     if ((byType['COMMAND_INJECTION'] ?? 0) >= 1) {
       recs.push('Use execFile() with array arguments instead of exec() with shell strings.');
     }
+    if ((byType['BROKEN_ACCESS_CONTROL'] ?? 0) >= 1) {
+      recs.push('Enforce authorization from the server-side session; never trust role/id fields from the client.');
+    }
+    if ((byType['WEAK_CRYPTOGRAPHY'] ?? 0) >= 1) {
+      recs.push('Replace MD5/SHA-1/ECB and hardcoded keys with AES-GCM and bcrypt/Argon2.');
+    }
+    if ((byType['INSECURE_AUTH'] ?? 0) >= 1) {
+      recs.push('Verify JWTs, hash passwords, rotate session IDs after login, and drop default credentials.');
+    }
+    if ((byType['UNSAFE_DESERIALIZATION'] ?? 0) >= 1 || (byType['SOFTWARE_INTEGRITY_FAILURE'] ?? 0) >= 1) {
+      recs.push('Avoid pickle/ObjectInputStream on untrusted data; pin dependencies and require SRI/signatures.');
+    }
+    if ((byType['SSRF'] ?? 0) >= 1) {
+      recs.push('Do not fetch client-supplied URLs; allow-list hosts and block private/metadata IP ranges.');
+    }
+    if ((byType['VULNERABLE_COMPONENT'] ?? 0) >= 1) {
+      recs.push('Upgrade pinned dependencies and run a software-composition scan (npm audit / OWASP DC) in CI.');
+    }
+    if ((byType['INSUFFICIENT_LOGGING'] ?? 0) >= 1) {
+      recs.push('Log auth and access-control outcomes; never write passwords or tokens to logs.');
+    }
+    if ((byType['SECURITY_MISCONFIGURATION'] ?? 0) >= 1) {
+      recs.push('Turn off debug/stack traces in production and set secure cookie/header defaults.');
+    }
     if (total > 15) {
       recs.push('High vulnerability density detected. Consider a dedicated secure code review session.');
     }

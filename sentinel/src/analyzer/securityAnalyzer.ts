@@ -8,18 +8,38 @@
 import { SqlInjectionRule } from '../rules/sqlInjectionRule.js';
 import { XssRule } from '../rules/xssRule.js';
 import { HardcodedSecretRule } from '../rules/hardcodedSecretRule.js';
+import { BrokenAccessControlRule } from '../rules/brokenAccessControlRule.js';
+import { CryptographicFailuresRule } from '../rules/cryptographicFailuresRule.js';
+import { InjectionRule } from '../rules/injectionRule.js';
+import { InsecureDesignRule } from '../rules/insecureDesignRule.js';
+import { SecurityMisconfigurationRule } from '../rules/securityMisconfigurationRule.js';
+import { VulnerableComponentsRule } from '../rules/vulnerableComponentsRule.js';
+import { AuthFailuresRule } from '../rules/authFailuresRule.js';
+import { IntegrityFailuresRule } from '../rules/integrityFailuresRule.js';
+import { LoggingFailuresRule } from '../rules/loggingFailuresRule.js';
+import { SsrfRule } from '../rules/ssrfRule.js';
 import { SecurityFinding, SecurityRule } from './types.js';
 
 export class SecurityAnalyzer {
   private rules: SecurityRule[];
 
   constructor() {
-    // Register all detection rules here.
-    // To add a new rule: create the class, import it, and add it to this list.
+    // OWASP Top 10 (2021) — one detector family per category, plus the original
+    // specialised SQL / XSS / secret rules that A03 / A07 build on.
     this.rules = [
-      new SqlInjectionRule(),
-      new XssRule(),
-      new HardcodedSecretRule(),
+      new BrokenAccessControlRule(),      // A01
+      new CryptographicFailuresRule(),    // A02
+      new SqlInjectionRule(),             // A03 (SQL)
+      new XssRule(),                      // A03 (XSS)
+      new InjectionRule(),                // A03 (command / NoSQL / LDAP / XPath / SSTI)
+      new InsecureDesignRule(),           // A04
+      new SecurityMisconfigurationRule(), // A05
+      new VulnerableComponentsRule(),     // A06
+      new HardcodedSecretRule(),          // A07 (CWE-798)
+      new AuthFailuresRule(),             // A07 (authn design)
+      new IntegrityFailuresRule(),        // A08
+      new LoggingFailuresRule(),          // A09
+      new SsrfRule(),                     // A10
     ];
   }
 

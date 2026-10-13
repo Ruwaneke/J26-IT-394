@@ -27,6 +27,72 @@ export enum VulnerabilityType {
   WEAK_CRYPTOGRAPHY      = 'WEAK_CRYPTOGRAPHY',
   INSECURE_AUTH          = 'INSECURE_AUTH',
   SENSITIVE_DATA_EXPOSURE = 'SENSITIVE_DATA_EXPOSURE',
+
+  // ── Added for full OWASP Top 10 (2021) coverage ──────────────────────────
+  BROKEN_ACCESS_CONTROL      = 'BROKEN_ACCESS_CONTROL',       // A01
+  NOSQL_INJECTION            = 'NOSQL_INJECTION',             // A03
+  LDAP_INJECTION             = 'LDAP_INJECTION',              // A03
+  XPATH_INJECTION            = 'XPATH_INJECTION',             // A03
+  INSECURE_DESIGN            = 'INSECURE_DESIGN',             // A04
+  SECURITY_MISCONFIGURATION  = 'SECURITY_MISCONFIGURATION',   // A05
+  VULNERABLE_COMPONENT       = 'VULNERABLE_COMPONENT',        // A06
+  SOFTWARE_INTEGRITY_FAILURE = 'SOFTWARE_INTEGRITY_FAILURE',  // A08
+  INSUFFICIENT_LOGGING       = 'INSUFFICIENT_LOGGING',        // A09
+  SSRF                       = 'SSRF',                        // A10
+}
+
+// ─── OWASP Top 10 (2021) mapping ──────────────────────────────────────────────
+
+export interface OwaspCategory {
+  /** e.g. 'A03:2021' */
+  id: string;
+  /** e.g. 'Injection' */
+  name: string;
+  /** Link to the official OWASP Top 10 page */
+  url: string;
+}
+
+export const OWASP_TOP_10_2021: Record<string, OwaspCategory> = {
+  A01: { id: 'A01:2021', name: 'Broken Access Control',                       url: 'https://owasp.org/Top10/A01_2021-Broken_Access_Control/' },
+  A02: { id: 'A02:2021', name: 'Cryptographic Failures',                      url: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/' },
+  A03: { id: 'A03:2021', name: 'Injection',                                   url: 'https://owasp.org/Top10/A03_2021-Injection/' },
+  A04: { id: 'A04:2021', name: 'Insecure Design',                             url: 'https://owasp.org/Top10/A04_2021-Insecure_Design/' },
+  A05: { id: 'A05:2021', name: 'Security Misconfiguration',                   url: 'https://owasp.org/Top10/A05_2021-Security_Misconfiguration/' },
+  A06: { id: 'A06:2021', name: 'Vulnerable and Outdated Components',          url: 'https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/' },
+  A07: { id: 'A07:2021', name: 'Identification and Authentication Failures',  url: 'https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/' },
+  A08: { id: 'A08:2021', name: 'Software and Data Integrity Failures',        url: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/' },
+  A09: { id: 'A09:2021', name: 'Security Logging and Monitoring Failures',    url: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/' },
+  A10: { id: 'A10:2021', name: 'Server-Side Request Forgery (SSRF)',          url: 'https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/' },
+};
+
+/** Which OWASP Top 10 category each vulnerability type belongs to. */
+export const VULNERABILITY_TO_OWASP: Record<VulnerabilityType, string> = {
+  [VulnerabilityType.BROKEN_ACCESS_CONTROL]:      'A01',
+  [VulnerabilityType.PATH_TRAVERSAL]:             'A01',
+  [VulnerabilityType.WEAK_CRYPTOGRAPHY]:          'A02',
+  [VulnerabilityType.SENSITIVE_DATA_EXPOSURE]:    'A02',
+  [VulnerabilityType.SQL_INJECTION]:              'A03',
+  [VulnerabilityType.XSS]:                        'A03',
+  [VulnerabilityType.COMMAND_INJECTION]:          'A03',
+  [VulnerabilityType.NOSQL_INJECTION]:            'A03',
+  [VulnerabilityType.LDAP_INJECTION]:             'A03',
+  [VulnerabilityType.XPATH_INJECTION]:            'A03',
+  [VulnerabilityType.INSECURE_DESIGN]:            'A04',
+  [VulnerabilityType.MISSING_INPUT_VALIDATION]:   'A04',
+  [VulnerabilityType.SECURITY_MISCONFIGURATION]:  'A05',
+  [VulnerabilityType.VULNERABLE_COMPONENT]:       'A06',
+  [VulnerabilityType.INSECURE_AUTH]:              'A07',
+  [VulnerabilityType.HARDCODED_SECRET]:           'A07', // CWE-798 is listed under A07
+  [VulnerabilityType.UNSAFE_DESERIALIZATION]:     'A08',
+  [VulnerabilityType.SOFTWARE_INTEGRITY_FAILURE]: 'A08',
+  [VulnerabilityType.INSUFFICIENT_LOGGING]:       'A09',
+  [VulnerabilityType.SSRF]:                       'A10',
+};
+
+/** Resolve the OWASP Top 10 category for a vulnerability type. */
+export function owaspCategoryFor(type: VulnerabilityType): OwaspCategory | undefined {
+  const key = VULNERABILITY_TO_OWASP[type];
+  return key ? OWASP_TOP_10_2021[key] : undefined;
 }
 
 // ─── Security Finding (the core output of Component 1) ───────────────────────
@@ -54,6 +120,8 @@ export interface SecurityFinding {
   detectedAt: string;
   /** Name of the rule that detected this */
   detectedByRule: string;
+  /** Optional: OWASP Top 10 (2021) category id, e.g. 'A03:2021' */
+  owaspCategory?: string;
   /** Optional: start offset in the document */
   rangeStart?: number;
   /** Optional: end offset in the document */

@@ -41,6 +41,14 @@ export function generateContextualExplanation(finding: SecurityFinding): Context
       return explainCommandInjection(finding);
     case VulnerabilityType.PATH_TRAVERSAL:
       return explainPathTraversal(finding);
+    case VulnerabilityType.SSRF:
+      return explainSsrf(finding);
+    case VulnerabilityType.INSECURE_AUTH:
+      return explainInsecureAuth(finding);
+    case VulnerabilityType.UNSAFE_DESERIALIZATION:
+      return explainDeserialization(finding);
+    case VulnerabilityType.BROKEN_ACCESS_CONTROL:
+      return explainBrokenAccess(finding);
     default:
       return genericExplanation(finding);
   }
@@ -345,6 +353,77 @@ function explainPathTraversal(finding: SecurityFinding): ContextualExplanation {
 }
 
 // ─── Generic Fallback ─────────────────────────────────────────────────────────
+
+function explainSsrf(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Server fetches a client-supplied URL (SSRF)',
+    whyDangerous:
+      `This line makes your server perform an HTTP (or file) request using a value the client chose. ` +
+      `Attackers can aim that request at cloud metadata (\`169.254.169.254\`) or internal services.`,
+    attackScenario:
+      `If the URL parameter is \`http://169.254.169.254/latest/meta-data/iam/security-credentials/\`, ` +
+      `the server may return cloud IAM keys to the attacker.`,
+    vulnerableCode: code,
+    fixedCode:
+      `const allowed = new Set(['api.partner.example']);\n` +
+      `const u = new URL(incomingUrl);\n` +
+      `if (u.protocol !== 'https:' || !allowed.has(u.hostname)) {\n` +
+      `  throw new Error('URL not allowed');\n` +
+      `}\n` +
+      `await fetch(u.toString());`,
+    fixExplanation: 'Allow-list hosts and schemes. Resolve DNS and reject private/link-local addresses before fetching.',
+  };
+}
+
+function explainInsecureAuth(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Authentication control is weak or bypassable',
+    whyDangerous: finding.message,
+    attackScenario:
+      `An attacker forges a JWT, guesses a default password, or reuses a stolen session id ` +
+      `because the server never verified a signature / hash / rotated the session.`,
+    vulnerableCode: code,
+    fixedCode:
+      `const payload = jwt.verify(token, process.env.JWT_SECRET);\n` +
+      `const ok = await bcrypt.compare(password, user.passwordHash);\n` +
+      `req.session.regenerate(() => { req.session.userId = user.id; });`,
+    fixExplanation: 'Verify signatures, store slow password hashes, and rotate the session after login.',
+  };
+}
+
+function explainDeserialization(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Untrusted data is deserialized with a powerful loader',
+    whyDangerous:
+      `Formats like pickle, Java serialization, BinaryFormatter, and PHP unserialize can construct ` +
+      `arbitrary objects — which often means remote code execution.`,
+    attackScenario:
+      `An attacker sends a crafted payload that instantiates a gadget class; during load the gadget ` +
+      `runs a command on your server.`,
+    vulnerableCode: code,
+    fixedCode: `# Use a data-only format\njson.loads(body)\n# or yaml.safe_load(body)`,
+    fixExplanation: 'Prefer JSON (or a safe YAML loader) and never unpickle / readObject untrusted bytes.',
+  };
+}
+
+function explainBrokenAccess(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Access control trusts the client or is missing',
+    whyDangerous: finding.message,
+    attackScenario:
+      `A user changes \`role=admin\` in the request, guesses another record id (IDOR), ` +
+      `or visits \`/admin\` because no middleware ran.`,
+    vulnerableCode: code,
+    fixedCode:
+      `app.get('/admin', requireAuth, requireRole('admin'), handler);\n` +
+      `const row = await db.findOne({ _id: id, ownerId: req.user.id });`,
+    fixExplanation: 'Authorize on the server from the verified session, and include owner/tenant in every query.',
+  };
+}
 
 function genericExplanation(finding: SecurityFinding): ContextualExplanation {
   return {

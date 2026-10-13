@@ -34,5 +34,16 @@
     "displayName": "Admin",
     "email": "admin@sentinel-research.dev",
     "createdAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "user-dev-gh-1791900634124",
+    "username": "HishenPerera",
+    "passwordHash": "",
+    "role": "developer",
+    "displayName": "Hishen Sandaru Perera",
+    "email": "hishenperera@gmail.com",
+    "createdAt": "2026-10-13T14:10:34.124Z",
+    "githubUsername": "HishenPerera",
+    "githubAvatarUrl": "https://avatars.githubusercontent.com/u/165247062?v=4"
   }
 ]

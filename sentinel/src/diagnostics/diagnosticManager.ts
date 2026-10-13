@@ -123,6 +123,21 @@ export class DiagnosticManager {
       HARDCODED_SECRET: 'Use_of_Hard-coded_Cryptographic_Key',
       COMMAND_INJECTION: 'Command_Injection',
       PATH_TRAVERSAL: 'Path_Traversal',
+      BROKEN_ACCESS_CONTROL: 'Broken_Access_Control',
+      WEAK_CRYPTOGRAPHY: 'Use_of_a_Broken_or_Risky_Cryptographic_Algorithm',
+      SENSITIVE_DATA_EXPOSURE: 'Sensitive_Data_Exposure',
+      NOSQL_INJECTION: 'NoSQL_Injection',
+      LDAP_INJECTION: 'LDAP_Injection',
+      XPATH_INJECTION: 'XPATH_Injection',
+      INSECURE_DESIGN: 'Insecure_Design',
+      MISSING_INPUT_VALIDATION: 'Improper_Input_Validation',
+      SECURITY_MISCONFIGURATION: 'Security_Misconfiguration',
+      VULNERABLE_COMPONENT: 'Using_Components_with_Known_Vulnerabilities',
+      INSECURE_AUTH: 'Broken_Authentication',
+      UNSAFE_DESERIALIZATION: 'Deserialization_of_untrusted_data',
+      SOFTWARE_INTEGRITY_FAILURE: 'Integrity_Failure',
+      INSUFFICIENT_LOGGING: 'Insufficient_Logging',
+      SSRF: 'Server_Side_Request_Forgery',
     };
     return map[type] || type;
   }

@@ -1,10 +1,10 @@
 {
   "developerId": "HishenPerera",
   "createdAt": "2026-10-05T17:47:31.038Z",
-  "updatedAt": "2026-10-05T17:47:31.038Z",
+  "updatedAt": "2026-10-13T14:36:40.834Z",
   "vulnLearning": {
     "HARDCODED_SECRET": {
-      "totalDetections": 2,
+      "totalDetections": 6,
       "totalFixes": 0,
       "totalIgnored": 0,
       "totalFalsePositives": 0,
@@ -14,12 +14,12 @@
           "ignoredCount": 0,
           "falsePositiveCount": 0,
           "adjustedConfidence": null,
-          "lastUpdatedAt": "2026-10-05T17:47:31.038Z"
+          "lastUpdatedAt": "2026-10-13T14:36:40.834Z"
         }
       },
       "suppressed": false,
       "firstSeenAt": "2026-10-05T17:47:31.038Z",
-      "lastSeenAt": "2026-10-05T17:47:31.038Z"
+      "lastSeenAt": "2026-10-13T14:36:40.834Z"
     }
   },
   "suppressedRules": {},
