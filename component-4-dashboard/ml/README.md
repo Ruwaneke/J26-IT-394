@@ -22,6 +22,7 @@ On macOS/Linux use `python3.12 -m venv .venv` and `.venv/bin/python`.
 .venv/Scripts/python -m src.simulate     # data/raw/events.jsonl, sessions.jsonl, developers.csv
 .venv/Scripts/python -m src.features     # data/processed/developer_weeks.csv
 .venv/Scripts/python -m src.trends       # developer_week_trends.csv, developer_trends.csv, team_weeks.csv
+.venv/Scripts/python -m src.forecast     # outputs/forecast_metrics.json, forecasts.json (see Forecasting)
 .venv/Scripts/python -m pytest           # tests
 ```
 
@@ -59,6 +60,77 @@ in `config.yaml`.
 - Per developer: OLS slope of intro rate per session over the study. Below
   -0.02/week = improving, above +0.02 = worsening, otherwise stable.
 - Team: weekly totals with **pooled** rates (total fixed / total detections).
+
+## Forecasting (Phase 2)
+
+```bash
+.venv/Scripts/python -m src.forecast --quick   # smoke test: 1 seed, 20 epochs, default settings (~25 s)
+.venv/Scripts/python -m src.forecast           # full: grid search, 5 seeds, both cells (~1.5 min on CPU)
+.venv/Scripts/python -m pytest tests/test_forecast.py tests/test_gru_numpy_matches_torch.py
+```
+
+Run `simulate`, `features` and `trends` first. Outputs (not committed):
+
+| File | Contents |
+|---|---|
+| `outputs/forecast_metrics.json` | selected settings, test metrics (mean ± std over seeds), per-horizon metrics, Wilcoxon tests, MAE by archetype |
+| `outputs/forecasts.json` | per developer: weekly history, test-period predicted vs actual, forecast for weeks 17-18 with seed spread |
+| `outputs/forecast_tuning.csv` | every grid configuration and its validation loss |
+
+**Task.** From the last L weeks (default 4) of 7 inputs (`vuln_count`,
+`fix_rate`, `ignore_rate`, `log1p(avg_response_time)`, `repeat_count`,
+`severity_weighted_load`, `active`), predict `vuln_count` and `fix_rate` for the
+next 2 weeks: 4 outputs, predicted directly. One model is pooled across all
+developers.
+
+**Split (chronological by target week).** Train uses origins 4-7 (targets in
+weeks 5-9). Validation uses origins 9-10 (targets 10-12). Test uses origins
+12-14 (targets 13-16). Standardisation uses weeks 1-9 only, tuning uses
+validation only, and the test set is used once.
+
+**Missing weeks.** Undefined inputs carry the last known value forward,
+alongside the `active` flag. Inactive target weeks are masked out of the loss
+and the metrics. `fix_rate` targets are also masked in weeks with zero
+detections.
+
+**Model.** A 1-layer GRU or LSTM, then dropout, then a linear head. It trains
+with masked Huber loss, AdamW (lr 0.003, weight decay 1e-4), gradient clipping
+at 1.0, and early stopping on validation loss (patience 30). The grid covers
+hidden {16, 32, 64} × L {3, 4} × dropout {0.1, 0.3}, scored on mean validation
+loss over 3 seeds. The final model trains with 5 seeds, and the test
+predictions are the mean of those seeds. Count outputs are clipped to ≥ 0, and
+`fix_rate` outputs to [0, 1].
+
+**Baselines.** Naive last value, mean of the last 4 weeks, and a per-developer
+linear trend over the window, all clipped.
+
+**Metrics.** MAE, RMSE and sMAPE (0/0 counts as 0; plain MAPE is undefined
+when the actual count is 0), per target and per horizon. Significance uses a
+paired Wilcoxon signed-rank test on per-developer MAE.
+
+**Deployment forecast.** The cell with the better validation loss is refit on
+all windows with targets up to week 16, using a fixed epoch count (the median
+best epoch from validation). It forecasts weeks 17-18 from weeks 13-16. The
+band is the min-max spread across 5 seeds. It is a *seed spread, not a
+calibrated confidence interval*.
+
+### Results (simulated data, seed 42)
+
+Test set: 180 windows, 338 valid `vuln_count` targets and 298 valid `fix_rate` targets.
+
+| Model | vuln_count MAE | vuln_count sMAPE | fix_rate MAE | fix_rate sMAPE |
+|---|---|---|---|---|
+| GRU (h=32, L=4, d=0.1), 5 seeds | 3.763 ± 0.030 | 77.1 ± 0.3 | 0.250 ± 0.001 | 51.3 ± 0.2 |
+| LSTM (h=64, L=4, d=0.1), 5 seeds | 3.734 ± 0.020 | 76.5 ± 0.3 | 0.252 ± 0.001 | 51.6 ± 0.2 |
+| Naive last value | 4.533 | 94.2 | 0.289 | 64.0 |
+| 4-week mean | 3.749 | 78.1 | 0.253 | 54.7 |
+| Linear trend | 5.336 | 111.3 | 0.323 | 72.6 |
+
+The recurrent models beat the naive and linear baselines significantly
+(Wilcoxon p < 0.05 for both targets). They do **not** beat the 4-week mean
+(p ≥ 0.09). Treat this as an honest negative result: on this data, most of the
+predictable signal is the developer's recent level. See `forecast_metrics.json`
+for per-horizon and per-archetype results.
 
 ## Simulator assumptions
 
