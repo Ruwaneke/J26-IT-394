@@ -46,6 +46,62 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccessDenied(
+            AccessDeniedException ex,
+            HttpServletRequest request) {
+
+        log.warn("Access denied: {}", ex.getMessage());
+
+        return buildResponse(
+                HttpStatus.FORBIDDEN,
+                ex.getMessage(),
+                request
+        );
+    }
+
+    @ExceptionHandler(InvalidStatusTransitionException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidStatusTransition(
+            InvalidStatusTransitionException ex,
+            HttpServletRequest request) {
+
+        log.warn("Invalid status transition: {}", ex.getMessage());
+
+        return buildResponse(
+                HttpStatus.CONFLICT,
+                ex.getMessage(),
+                request
+        );
+    }
+
+    @ExceptionHandler(InvalidGitHubTokenException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidGitHubToken(
+            InvalidGitHubTokenException ex,
+            HttpServletRequest request) {
+
+        log.warn("GitHub authentication failed: {}", ex.getMessage());
+
+        return buildResponse(
+                HttpStatus.UNAUTHORIZED,
+                ex.getMessage(),
+                request
+        );
+    }
+
+    @ExceptionHandler(GitHubApiException.class)
+    public ResponseEntity<ApiErrorResponse> handleGitHubApi(
+            GitHubApiException ex,
+            HttpServletRequest request) {
+
+        log.error("GitHub API error: {}", ex.getMessage());
+
+        return buildResponse(
+                HttpStatus.BAD_GATEWAY,
+                ex.getMessage(),
+                request
+        );
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiErrorResponse> handleValidation(
             MethodArgumentNotValidException ex,
