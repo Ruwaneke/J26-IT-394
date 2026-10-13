@@ -31,6 +31,43 @@ trends:
   slope_min_points: 3
   direction_threshold: 0.02   # |slope of intro rate per session per week| below this = "stable"
 
+forecast:
+  inputs: [vuln_count, fix_rate, ignore_rate, log_response_time, repeat_count, severity_weighted_load, active]
+  targets: [vuln_count, fix_rate]
+  window: 4                       # default input length L (weeks); also used by the baselines
+  horizon: 2                      # predict weeks t+1 and t+2 directly (4 outputs)
+  split:                          # strictly chronological by TARGET week
+    train_max_target_week: 9      # train origins: every target week <= 9
+    val_origins: [9, 10]          # targets in weeks 10-12
+    test_origins: [12, 13, 14]    # targets in weeks 13-16
+  model:
+    cells: [gru, lstm]            # both are trained and reported
+    cell: gru                     # default cell for single-model use
+    hidden: 32
+    dropout: 0.1
+  grid:                           # tuned on VALIDATION only
+    hidden: [16, 32, 64]
+    window: [3, 4]
+    dropout: [0.1, 0.3]
+  training:
+    lr: 0.003
+    weight_decay: 0.0001
+    batch_size: 64
+    max_epochs: 300
+    patience: 30
+    grad_clip: 1.0
+    huber_delta: 1.0
+    tuning_seeds: [0, 1, 2]
+    seeds: [0, 1, 2, 3, 4]
+  quick:                          # --quick smoke test
+    max_epochs: 20
+    patience: 5
+    seeds: [0]
+  outputs:
+    metrics: outputs/forecast_metrics.json
+    forecasts: outputs/forecasts.json
+    tuning: outputs/forecast_tuning.csv
+
 simulation:
   n_developers: 60
   archetype_mix: {improving: 0.30, stagnant: 0.30, worsening: 0.20, erratic: 0.20}
