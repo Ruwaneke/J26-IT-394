@@ -21,6 +21,7 @@ import {
   SecurityRule,
   Severity,
   VulnerabilityType,
+  computeFindingId,
 } from '../analyzer/types.js';
 
 // ─── Pattern Definitions ──────────────────────────────────────────────────────
@@ -219,7 +220,7 @@ export class XssRule implements SecurityRule {
         const confidence = this.computeConfidence(pattern, surroundingContext);
 
         findings.push({
-          id:              uuidv4(),
+          id:              computeFindingId(fileName, VulnerabilityType.XSS, this.ruleId, lineContent.trim(), 0),
           type:            VulnerabilityType.XSS,
           severity:        Severity.HIGH,
           confidence,

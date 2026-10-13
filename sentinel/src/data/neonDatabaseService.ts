@@ -1,0 +1,1176 @@
+/**
+ * Sentinel — Neon PostgreSQL Database Service
+ *
+ * Provides persistent database storage for:
+ *   1. System Users by role (developer, supervisor, administrator)
+ *      with GitHub username mapping & avatar caching.
+ *   2. Vulnerability Records per developer/user with lifecycle status
+ *      ('OPEN', 'FIXED', 'IGNORED', 'FALSE_POSITIVE'),
+ *      root-cause explanation (Why it is vulnerable),
+ *      and remediation guidance (How to fix + secure replacement code).
+ *   3. User Activity & Audit Logs tracking all user actions in the system.
+ *   4. Projects & Shifts management metadata.
+ *
+ * Connected to Neon Serverless PostgreSQL with SSL.
+ * Automatically provisions tables and seeds initial users if empty.
+ * Provides offline fallback if database is momentarily unreachable.
+ */
+
+import { Pool, PoolConfig, QueryResult } from 'pg';
+import * as fs from 'fs';
+import * as path from 'path';
+import { SecurityFinding, VulnerabilityType } from '../analyzer/types.js';
+import { ContextualExplanation } from '../diagnostics/contextualExplainer.js';
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
+
+export type UserRole = 'developer' | 'supervisor' | 'administrator';
+export type VulnerabilityStatus = 'OPEN' | 'FIXED' | 'IGNORED' | 'FALSE_POSITIVE';
+
+export interface DbUser {
+  id: string;
+  username: string;
+  githubUsername: string | null;
+  passwordHash: string;
+  role: UserRole;
+  displayName: string;
+  email: string;
+  githubAvatarUrl: string | null;
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+export interface DbVulnerabilityRecord {
+  recordId: string;
+  findingId: string;
+  developerId: string;
+  githubUsername: string | null;
+  sessionId: string;
+  shiftId: string | null;
+  vulnerabilityType: string;
+  severity: string;
+  confidence: number;
+  fileName: string;
+  lineNumber: number;
+  columnNumber: number;
+  codeSnippet: string;
+  whyVulnerable: string;
+  howToFix: string;
+  fixedCode: string;
+  attackScenario: string;
+  status: VulnerabilityStatus;
+  detectedByRule: string;
+  detectedAt: string;
+  fixedAt: string | null;
+  updatedAt: string;
+}
+
+export interface VulnerabilityStats {
+  totalIdentified: number;
+  fixedCount: number;
+  openCount: number;
+  ignoredCount: number;
+  fixPercentage: number;
+  openPercentage: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  byType: Record<string, number>;
+  byStatus: Record<string, number>;
+}
+
+export interface UserActivityLog {
+  id: string;
+  userId?: string;
+  username?: string;
+  developerId?: string;
+  githubUsername?: string;
+  actionType: string;
+  findingId?: string;
+  vulnerabilityType?: string;
+  details?: any;
+  createdAt: string;
+}
+
+// ─── Default Connection Config (Neon DB) ──────────────────────────────────────
+
+export const DEFAULT_POSTGRES_CONFIG = {
+  host: process.env.PGHOST || 'ep-silent-art-b48vcnb1-pooler.c-6.us-east-2.aws.neon.tech',
+  database: process.env.PGDATABASE || 'neondb',
+  user: process.env.PGUSER || 'neondb_owner',
+  password: process.env.PGPASSWORD || 'npg_xHO4F1ATCpZQ',
+  port: parseInt(process.env.PGPORT || '5432', 10),
+  ssl: {
+    rejectUnauthorized: false,
+  },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+};
+
+// ─── Service Class ────────────────────────────────────────────────────────────
+
+export class NeonDatabaseService {
+  private static instance: NeonDatabaseService | null = null;
+  private pool: Pool | null = null;
+  private isInitialized = false;
+  private isOnline = false;
+  private lastPingMs = -1;
+  private lastError: string | null = null;
+  private dataDir: string;
+
+  constructor(extensionPath?: string) {
+    this.dataDir = extensionPath
+      ? path.join(extensionPath, 'src', 'data')
+      : path.join(__dirname, '..', 'data');
+    this.initPool();
+  }
+
+  public static getInstance(extensionPath?: string): NeonDatabaseService {
+    if (!NeonDatabaseService.instance) {
+      NeonDatabaseService.instance = new NeonDatabaseService(extensionPath);
+    }
+    return NeonDatabaseService.instance;
+  }
+
+  private initPool(): void {
+    try {
+      this.pool = new Pool(DEFAULT_POSTGRES_CONFIG);
+      this.pool.on('error', (err) => {
+        console.error('[NeonDb] Unexpected pool client error:', err.message);
+        this.isOnline = false;
+        this.lastError = err.message;
+      });
+    } catch (err: any) {
+      console.error('[NeonDb] Failed to instantiate pg.Pool:', err.message);
+      this.pool = null;
+      this.isOnline = false;
+      this.lastError = err.message;
+    }
+  }
+
+  // ── Database Initialization & DDL Migration ──────────────────────────────────
+
+  public async initialize(): Promise<boolean> {
+    if (this.isInitialized && this.isOnline) {
+      return true;
+    }
+    if (!this.pool) {
+      this.initPool();
+    }
+    if (!this.pool) {
+      return false;
+    }
+
+    const startTime = Date.now();
+    try {
+      // 1. Verify connection
+      const pingResult = await this.pool.query('SELECT NOW() as now, current_database() as db;');
+      this.lastPingMs = Date.now() - startTime;
+      this.isOnline = true;
+      this.lastError = null;
+      console.log(`[NeonDb] Connected to Neon PostgreSQL in ${this.lastPingMs}ms (${pingResult.rows[0].db})`);
+
+      // 2. Create Schema / Tables
+      await this.pool.query(`
+        -- Users table
+        CREATE TABLE IF NOT EXISTS users (
+          id VARCHAR(64) PRIMARY KEY,
+          username VARCHAR(100) UNIQUE NOT NULL,
+          github_username VARCHAR(100) UNIQUE,
+          password_hash VARCHAR(128) DEFAULT '',
+          role VARCHAR(32) NOT NULL DEFAULT 'developer',
+          display_name VARCHAR(200) NOT NULL,
+          email VARCHAR(200) DEFAULT '',
+          github_avatar_url TEXT DEFAULT '',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          last_login_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        -- Vulnerability Records table
+        CREATE TABLE IF NOT EXISTS vulnerability_records (
+          record_id VARCHAR(64) PRIMARY KEY,
+          finding_id VARCHAR(64) NOT NULL,
+          developer_id VARCHAR(100) NOT NULL,
+          github_username VARCHAR(100),
+          session_id VARCHAR(100),
+          shift_id VARCHAR(100),
+          vulnerability_type VARCHAR(100) NOT NULL,
+          severity VARCHAR(20) NOT NULL,
+          confidence NUMERIC(5, 4) NOT NULL,
+          file_name TEXT NOT NULL,
+          line_number INTEGER NOT NULL,
+          column_number INTEGER NOT NULL DEFAULT 0,
+          code_snippet TEXT NOT NULL,
+          why_vulnerable TEXT,
+          how_to_fix TEXT,
+          fixed_code TEXT,
+          attack_scenario TEXT,
+          status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+          detected_by_rule VARCHAR(100),
+          detected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          fixed_at TIMESTAMP WITH TIME ZONE,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_vuln_dev ON vulnerability_records(developer_id);
+        CREATE INDEX IF NOT EXISTS idx_vuln_status ON vulnerability_records(status);
+        CREATE INDEX IF NOT EXISTS idx_vuln_finding ON vulnerability_records(finding_id);
+        CREATE INDEX IF NOT EXISTS idx_vuln_file_line ON vulnerability_records(file_name, line_number);
+
+        -- User activity / audit logs
+        CREATE TABLE IF NOT EXISTS user_activity_logs (
+          id VARCHAR(64) PRIMARY KEY,
+          user_id VARCHAR(64),
+          username VARCHAR(100),
+          developer_id VARCHAR(100),
+          github_username VARCHAR(100),
+          action_type VARCHAR(64) NOT NULL,
+          finding_id VARCHAR(64),
+          vulnerability_type VARCHAR(100),
+          details JSONB,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_act_dev ON user_activity_logs(developer_id);
+        CREATE INDEX IF NOT EXISTS idx_act_time ON user_activity_logs(created_at DESC);
+      `);
+
+      // 3. Seed initial users if table is empty
+      await this.seedUsersIfEmpty();
+
+      // 4. Migrate any local vulnerability records to DB
+      await this.syncLocalRecordsIfEmpty();
+
+      this.isInitialized = true;
+      return true;
+    } catch (err: any) {
+      this.isOnline = false;
+      this.lastError = err.message;
+      console.error('[NeonDb] Database initialization error:', err.message);
+      return false;
+    }
+  }
+
+  public getStatus(): { isOnline: boolean; pingMs: number; error: string | null } {
+    return {
+      isOnline: this.isOnline,
+      pingMs: this.lastPingMs,
+      error: this.lastError,
+    };
+  }
+
+  // ─── Seed & Local Sync ───────────────────────────────────────────────────────
+
+  private async seedUsersIfEmpty(): Promise<void> {
+    if (!this.pool) { return; }
+    try {
+      const res = await this.pool.query('SELECT COUNT(*) as count FROM users;');
+      const count = parseInt(res.rows[0].count, 10);
+      if (count > 0) { return; }
+
+      // Read users.json if exists
+      const usersFilePath = path.join(this.dataDir, 'users.json');
+      let usersToSeed: any[] = [];
+      if (fs.existsSync(usersFilePath)) {
+        try {
+          const raw = fs.readFileSync(usersFilePath, 'utf8');
+          usersToSeed = JSON.parse(raw);
+        } catch { /* skip */ }
+      }
+
+      if (usersToSeed.length === 0) {
+        usersToSeed = [
+          {
+            id: 'user-adm-001',
+            username: 'admin',
+            passwordHash: '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9',
+            role: 'administrator',
+            displayName: 'System Admin',
+            email: 'admin@sentinel-research.dev',
+          },
+          {
+            id: 'user-sup-001',
+            username: 'supervisor01',
+            passwordHash: '1c8b3a939e438b44507d10fe725bc34c206a0a9d0189be00e47300b4e8e6d6d9',
+            role: 'supervisor',
+            displayName: 'Carol (Supervisor)',
+            email: 'carol@sentinel-research.dev',
+          },
+          {
+            id: 'user-dev-gh-hishen',
+            username: 'HishenPerera',
+            githubUsername: 'HishenPerera',
+            passwordHash: '',
+            role: 'developer',
+            displayName: 'Hishen Sandaru Perera',
+            email: 'hishenperera@gmail.com',
+            githubAvatarUrl: 'https://avatars.githubusercontent.com/u/165247062?v=4',
+          },
+          {
+            id: 'user-dev-001',
+            username: 'dev01',
+            passwordHash: '87274af01876341455b32d805946f272871bb42effa6604dccf28bb027afa82b',
+            role: 'developer',
+            displayName: 'Alice (Developer)',
+            email: 'alice@sentinel-research.dev',
+          },
+        ];
+      }
+
+      for (const u of usersToSeed) {
+        await this.pool.query(
+          `INSERT INTO users (id, username, github_username, password_hash, role, display_name, email, github_avatar_url, created_at, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING;`,
+          [
+            u.id || `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            u.username,
+            u.githubUsername || null,
+            u.passwordHash || '',
+            u.role || 'developer',
+            u.displayName || u.username,
+            u.email || '',
+            u.githubAvatarUrl || null,
+          ]
+        );
+      }
+      console.log(`[NeonDb] Seeded ${usersToSeed.length} initial users into users table.`);
+    } catch (err: any) {
+      console.error('[NeonDb] Failed to seed initial users:', err.message);
+    }
+  }
+
+  private async syncLocalRecordsIfEmpty(): Promise<void> {
+    if (!this.pool) { return; }
+    try {
+      const res = await this.pool.query('SELECT COUNT(*) as count FROM vulnerability_records;');
+      const count = parseInt(res.rows[0].count, 10);
+      if (count > 0) { return; }
+
+      // Check DEV001_vulnerability_records.json
+      const files = fs.readdirSync(this.dataDir).filter(f => f.endsWith('_vulnerability_records.json'));
+      let importedCount = 0;
+
+      for (const file of files) {
+        try {
+          const raw = fs.readFileSync(path.join(this.dataDir, file), 'utf8');
+          const recs = JSON.parse(raw);
+          if (Array.isArray(recs)) {
+            for (const r of recs.slice(0, 30)) { // import sample records
+              await this.pool.query(
+                `INSERT INTO vulnerability_records (
+                  record_id, finding_id, developer_id, github_username, session_id, shift_id,
+                  vulnerability_type, severity, confidence, file_name, line_number, column_number,
+                  code_snippet, why_vulnerable, how_to_fix, fixed_code, attack_scenario,
+                  status, detected_by_rule, detected_at, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW())
+                ON CONFLICT (record_id) DO NOTHING;`,
+                [
+                  r.recordId,
+                  r.findingId || r.recordId,
+                  r.developerId || 'DEV001',
+                  r.githubUsername || null,
+                  r.sessionId || 'SESSION-INIT',
+                  null,
+                  r.vulnerabilityType,
+                  r.severity,
+                  r.confidence || 0.9,
+                  r.fileName,
+                  r.lineNumber || 1,
+                  r.columnNumber || 0,
+                  r.codeSnippet || '',
+                  `Detected vulnerable pattern: ${r.vulnerabilityType} violates secure coding rules.`,
+                  `Refactor the code to remove insecure operations and follow OWASP standards.`,
+                  `// Secure alternative implementation`,
+                  `Exploitation could compromise system integrity or disclose confidential data.`,
+                  'OPEN',
+                  r.detectedByRule || 'SENTINEL-RULE',
+                  r.detectedAt || new Date().toISOString(),
+                ]
+              );
+              importedCount++;
+            }
+          }
+        } catch { /* skip */ }
+      }
+      if (importedCount > 0) {
+        console.log(`[NeonDb] Imported ${importedCount} historic vulnerability records to PostgreSQL.`);
+      }
+    } catch (err: any) {
+      console.error('[NeonDb] Failed to sync local records:', err.message);
+    }
+  }
+
+  // ─── User Management API ────────────────────────────────────────────────────
+
+  public async getAllUsers(): Promise<DbUser[]> {
+    if (!this.pool || !this.isOnline) {
+      return this.getLocalUsers();
+    }
+    try {
+      const res = await this.pool.query(
+        `SELECT id, username, github_username, password_hash, role, display_name, email,
+                github_avatar_url, created_at, last_login_at
+         FROM users
+         ORDER BY role ASC, display_name ASC;`
+      );
+      return res.rows.map(this.mapDbUser);
+    } catch (err: any) {
+      console.error('[NeonDb] getAllUsers error:', err.message);
+      return this.getLocalUsers();
+    }
+  }
+
+  public async getDevelopers(): Promise<DbUser[]> {
+    const all = await this.getAllUsers();
+    return all.filter(u => u.role === 'developer');
+  }
+
+  public async getUserByUsernameOrGitHub(usernameOrGh: string): Promise<DbUser | null> {
+    if (!this.pool || !this.isOnline) {
+      const local = this.getLocalUsers();
+      return local.find(u => u.username === usernameOrGh || u.githubUsername === usernameOrGh) || null;
+    }
+    try {
+      const res = await this.pool.query(
+        `SELECT id, username, github_username, password_hash, role, display_name, email,
+                github_avatar_url, created_at, last_login_at
+         FROM users
+         WHERE username = $1 OR github_username = $1
+         LIMIT 1;`,
+        [usernameOrGh]
+      );
+      if (res.rows.length === 0) { return null; }
+      return this.mapDbUser(res.rows[0]);
+    } catch (err: any) {
+      console.error('[NeonDb] getUserByUsernameOrGitHub error:', err.message);
+      return null;
+    }
+  }
+
+  public async upsertGitHubUser(profile: {
+    login: string;
+    name?: string | null;
+    email?: string | null;
+    avatar_url?: string;
+    role?: UserRole;
+  }): Promise<DbUser> {
+    const role = profile.role || 'developer';
+    const displayName = profile.name || profile.login;
+    const email = profile.email || `${profile.login}@github.com`;
+    const avatarUrl = profile.avatar_url || '';
+    const userId = `user-gh-${profile.login}`;
+
+    if (this.pool && this.isOnline) {
+      try {
+        const res = await this.pool.query(
+          `INSERT INTO users (id, username, github_username, password_hash, role, display_name, email, github_avatar_url, created_at, last_login_at)
+           VALUES ($1, $2, $3, '', $4, $5, $6, $7, NOW(), NOW())
+           ON CONFLICT (username) DO UPDATE SET
+             github_username = EXCLUDED.github_username,
+             display_name = EXCLUDED.display_name,
+             email = EXCLUDED.email,
+             github_avatar_url = EXCLUDED.github_avatar_url,
+             last_login_at = NOW()
+           RETURNING *;`,
+          [userId, profile.login, profile.login, role, displayName, email, avatarUrl]
+        );
+        return this.mapDbUser(res.rows[0]);
+      } catch (err: any) {
+        console.error('[NeonDb] upsertGitHubUser error, falling back to local:', err.message);
+      }
+    }
+
+    // Local fallback
+    const user: DbUser = {
+      id: userId,
+      username: profile.login,
+      githubUsername: profile.login,
+      passwordHash: '',
+      role,
+      displayName,
+      email,
+      githubAvatarUrl: avatarUrl,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    };
+    this.saveLocalUser(user);
+    return user;
+  }
+
+  public async addUser(
+    username: string,
+    passwordHash: string,
+    role: UserRole,
+    displayName: string,
+    email: string
+  ): Promise<{ success: boolean; message: string; user?: DbUser }> {
+    const userId = `user-${role.slice(0, 3)}-${Date.now()}`;
+    if (this.pool && this.isOnline) {
+      try {
+        const res = await this.pool.query(
+          `INSERT INTO users (id, username, password_hash, role, display_name, email, created_at, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+           RETURNING *;`,
+          [userId, username, passwordHash, role, displayName, email]
+        );
+        const user = this.mapDbUser(res.rows[0]);
+        this.saveLocalUser(user);
+        return { success: true, message: `User "${username}" created successfully.`, user };
+      } catch (err: any) {
+        if (err.code === '23505') {
+          return { success: false, message: `Username "${username}" already exists in PostgreSQL.` };
+        }
+        return { success: false, message: `Failed to create user: ${err.message}` };
+      }
+    }
+
+    // Local fallback
+    const user: DbUser = {
+      id: userId,
+      username,
+      githubUsername: null,
+      passwordHash,
+      role,
+      displayName,
+      email,
+      githubAvatarUrl: null,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    };
+    this.saveLocalUser(user);
+    return { success: true, message: `User "${username}" created in local store (offline mode).`, user };
+  }
+
+  public async removeUser(userId: string): Promise<{ success: boolean; message: string }> {
+    if (this.pool && this.isOnline) {
+      try {
+        const res = await this.pool.query('DELETE FROM users WHERE id = $1 RETURNING username;', [userId]);
+        if (res.rowCount && res.rowCount > 0) {
+          this.removeLocalUser(userId);
+          return { success: true, message: `User "${res.rows[0].username}" deleted successfully.` };
+        }
+        return { success: false, message: 'User not found in PostgreSQL.' };
+      } catch (err: any) {
+        return { success: false, message: `Failed to delete user: ${err.message}` };
+      }
+    }
+    this.removeLocalUser(userId);
+    return { success: true, message: 'User deleted from local store.' };
+  }
+
+  public async updateLastLogin(usernameOrId: string): Promise<void> {
+    if (this.pool && this.isOnline) {
+      try {
+        await this.pool.query(
+          `UPDATE users SET last_login_at = NOW() WHERE id = $1 OR username = $1 OR github_username = $1;`,
+          [usernameOrId]
+        );
+      } catch { /* ignore */ }
+    }
+  }
+
+  // ─── Vulnerability Records API ──────────────────────────────────────────────
+
+  /**
+   * Save a newly identified vulnerability record into PostgreSQL.
+   * Status defaults to 'OPEN'.
+   */
+  public async saveVulnerabilityRecord(
+    finding: SecurityFinding,
+    developerId: string,
+    githubUsername: string | null,
+    sessionId: string,
+    explanation: ContextualExplanation,
+    shiftId: string | null = null
+  ): Promise<DbVulnerabilityRecord> {
+    const recordId = `REC-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+
+    const record: DbVulnerabilityRecord = {
+      recordId,
+      findingId: finding.id,
+      developerId,
+      githubUsername,
+      sessionId,
+      shiftId,
+      vulnerabilityType: finding.type,
+      severity: finding.severity,
+      confidence: finding.confidence,
+      fileName: finding.fileName,
+      lineNumber: finding.lineNumber,
+      columnNumber: finding.columnNumber,
+      codeSnippet: finding.codeSnippet,
+      whyVulnerable: explanation.whyDangerous,
+      howToFix: explanation.fixExplanation,
+      fixedCode: explanation.fixedCode,
+      attackScenario: explanation.attackScenario,
+      status: 'OPEN',
+      detectedByRule: finding.detectedByRule,
+      detectedAt: finding.detectedAt || new Date().toISOString(),
+      fixedAt: null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (this.pool && this.isOnline) {
+      try {
+        // Check if this finding already exists for this developer
+        const existing = await this.pool.query(
+          `SELECT record_id, status FROM vulnerability_records
+           WHERE finding_id = $1 AND (developer_id = $2 OR github_username = $2)
+           LIMIT 1;`,
+          [finding.id, developerId]
+        );
+
+        if (existing.rows.length > 0) {
+          const row = existing.rows[0];
+          // Keep or reopen as OPEN, update line number and snippet
+          await this.pool.query(
+            `UPDATE vulnerability_records SET
+              line_number = $1,
+              column_number = $2,
+              code_snippet = $3,
+              why_vulnerable = $4,
+              how_to_fix = $5,
+              fixed_code = $6,
+              attack_scenario = $7,
+              status = 'OPEN',
+              updated_at = NOW()
+             WHERE record_id = $8;`,
+            [
+              finding.lineNumber,
+              finding.columnNumber,
+              finding.codeSnippet,
+              explanation.whyDangerous,
+              explanation.fixExplanation,
+              explanation.fixedCode,
+              explanation.attackScenario,
+              row.record_id,
+            ]
+          );
+          return {
+            ...record,
+            recordId: row.record_id,
+            status: 'OPEN',
+          };
+        }
+
+        // Insert new record
+        await this.pool.query(
+          `INSERT INTO vulnerability_records (
+            record_id, finding_id, developer_id, github_username, session_id, shift_id,
+            vulnerability_type, severity, confidence, file_name, line_number, column_number,
+            code_snippet, why_vulnerable, how_to_fix, fixed_code, attack_scenario,
+            status, detected_by_rule, detected_at, fixed_at, updated_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NULL,NOW());`,
+          [
+            record.recordId,
+            record.findingId,
+            record.developerId,
+            record.githubUsername,
+            record.sessionId,
+            record.shiftId,
+            record.vulnerabilityType,
+            record.severity,
+            record.confidence,
+            record.fileName,
+            record.lineNumber,
+            record.columnNumber,
+            record.codeSnippet,
+            record.whyVulnerable,
+            record.howToFix,
+            record.fixedCode,
+            record.attackScenario,
+            'OPEN',
+            record.detectedByRule,
+            record.detectedAt,
+          ]
+        );
+      } catch (err: any) {
+        console.error('[NeonDb] saveVulnerabilityRecord error:', err.message);
+      }
+    }
+
+    // Also persist to local file for safety
+    this.appendLocalRecord(developerId, record);
+    return record;
+  }
+
+  /**
+   * Update the status of a vulnerability (e.g. to 'FIXED' or 'IGNORED').
+   */
+  public async updateVulnerabilityStatus(
+    findingIdOrRecordId: string,
+    developerId: string,
+    status: VulnerabilityStatus,
+    actionByUsername?: string
+  ): Promise<boolean> {
+    const isFixed = status === 'FIXED';
+    const nowIso = new Date().toISOString();
+
+    if (this.pool && this.isOnline) {
+      try {
+        const res = await this.pool.query(
+          `UPDATE vulnerability_records
+           SET status = $1,
+               fixed_at = ${isFixed ? 'NOW()' : 'fixed_at'},
+               updated_at = NOW()
+           WHERE (finding_id = $2 OR record_id = $2)
+             AND ($3 = '' OR developer_id = $3 OR github_username = $3);`,
+          [status, findingIdOrRecordId, developerId || '']
+        );
+
+        if (res.rowCount && res.rowCount > 0) {
+          // Log user action in activity logs
+          await this.logActivity({
+            developerId,
+            username: actionByUsername || developerId,
+            actionType: isFixed ? 'VULNERABILITY_FIXED' : `VULNERABILITY_${status}`,
+            findingId: findingIdOrRecordId,
+            details: { newStatus: status, timestamp: nowIso },
+          });
+          return true;
+        }
+      } catch (err: any) {
+        console.error('[NeonDb] updateVulnerabilityStatus error:', err.message);
+      }
+    }
+
+    // Local fallback update
+    this.updateLocalRecordStatus(developerId, findingIdOrRecordId, status);
+    return true;
+  }
+
+  /**
+   * Automatically detect when previously 'OPEN' vulnerabilities in a file
+   * have been resolved (are no longer returned in currentActiveFindingIds).
+   * Marks them as 'FIXED' in PostgreSQL!
+   */
+  public async autoDetectFixedFindingsInFile(
+    fileName: string,
+    developerId: string,
+    currentActiveFindingIds: string[]
+  ): Promise<number> {
+    if (!this.pool || !this.isOnline) {
+      return 0;
+    }
+
+    try {
+      // Find open records for this developer and file
+      const res = await this.pool.query(
+        `SELECT finding_id, record_id, vulnerability_type
+         FROM vulnerability_records
+         WHERE file_name = $1
+           AND (developer_id = $2 OR github_username = $2)
+           AND status = 'OPEN';`,
+        [fileName, developerId]
+      );
+
+      const toFix = res.rows.filter(
+        row => !currentActiveFindingIds.includes(row.finding_id)
+      );
+
+      if (toFix.length === 0) {
+        return 0;
+      }
+
+      const findingIdsToFix = toFix.map(r => r.finding_id);
+      await this.pool.query(
+        `UPDATE vulnerability_records
+         SET status = 'FIXED',
+             fixed_at = NOW(),
+             updated_at = NOW()
+         WHERE finding_id = ANY($1::text[])
+           AND (developer_id = $2 OR github_username = $2);`,
+        [findingIdsToFix, developerId]
+      );
+
+      // Log automated fix event and sync local records
+      for (const fixed of toFix) {
+        this.updateLocalRecordStatus(developerId, fixed.finding_id, 'FIXED');
+        await this.logActivity({
+          developerId,
+          username: developerId,
+          actionType: 'CODE_FIX_DETECTED',
+          findingId: fixed.finding_id,
+          vulnerabilityType: fixed.vulnerability_type,
+          details: { file: fileName, automated: true },
+        });
+      }
+
+      console.log(`[NeonDb] Auto-marked ${toFix.length} vulnerabilities as FIXED for ${developerId} in ${path.basename(fileName)}`);
+      return toFix.length;
+    } catch (err: any) {
+      console.error('[NeonDb] autoDetectFixedFindingsInFile error:', err.message);
+      return 0;
+    }
+  }
+
+  /**
+   * Calculate precise vulnerability progress and counts for a developer or all users.
+   *
+   * Formats precise percentage based on identified vs fixed findings count.
+   */
+  public async getVulnerabilityStats(developerId?: string): Promise<VulnerabilityStats> {
+    const stats: VulnerabilityStats = {
+      totalIdentified: 0,
+      fixedCount: 0,
+      openCount: 0,
+      ignoredCount: 0,
+      fixPercentage: 0,
+      openPercentage: 0,
+      criticalCount: 0,
+      highCount: 0,
+      mediumCount: 0,
+      lowCount: 0,
+      byType: {},
+      byStatus: { OPEN: 0, FIXED: 0, IGNORED: 0, FALSE_POSITIVE: 0 },
+    };
+
+    if (this.pool && this.isOnline) {
+      try {
+        const query = developerId
+          ? `SELECT vulnerability_type, severity, status, COUNT(*) as count
+             FROM vulnerability_records
+             WHERE developer_id = $1 OR github_username = $1
+             GROUP BY vulnerability_type, severity, status;`
+          : `SELECT vulnerability_type, severity, status, COUNT(*) as count
+             FROM vulnerability_records
+             GROUP BY vulnerability_type, severity, status;`;
+
+        const params = developerId ? [developerId] : [];
+        const res = await this.pool.query(query, params);
+
+        for (const row of res.rows) {
+          const c = parseInt(row.count, 10);
+          stats.totalIdentified += c;
+
+          if (row.status === 'FIXED') { stats.fixedCount += c; }
+          else if (row.status === 'OPEN') { stats.openCount += c; }
+          else if (row.status === 'IGNORED') { stats.ignoredCount += c; }
+
+          if (row.status === 'OPEN') {
+            if (row.severity === 'CRITICAL') stats.criticalCount += c;
+            else if (row.severity === 'HIGH') stats.highCount += c;
+            else if (row.severity === 'MEDIUM') stats.mediumCount += c;
+            else if (row.severity === 'LOW') stats.lowCount += c;
+          }
+
+          stats.byStatus[row.status] = (stats.byStatus[row.status] || 0) + c;
+          stats.byType[row.vulnerability_type] = (stats.byType[row.vulnerability_type] || 0) + c;
+        }
+
+        // Calculate mathematically precise percentages:
+        // fixPercentage is strictly the ratio of fixed findings to total identified findings.
+        // When 6 vulnerabilities exist and 0 are fixed, fixPercentage is 0.0%.
+        if (stats.totalIdentified > 0) {
+          stats.fixPercentage = Math.round((stats.fixedCount / stats.totalIdentified) * 1000) / 10;
+          stats.openPercentage = Math.round((stats.openCount / stats.totalIdentified) * 1000) / 10;
+        } else {
+          stats.fixPercentage = 0.0;
+          stats.openPercentage = 0.0;
+        }
+
+        return stats;
+      } catch (err: any) {
+        console.error('[NeonDb] getVulnerabilityStats error, using local:', err.message);
+      }
+    }
+
+    // Fallback to local records calculation
+    return this.calculateLocalStats(developerId);
+  }
+
+  /**
+   * Fetch records for display in the modern UI.
+   */
+  public async getVulnerabilityRecords(
+    developerId?: string,
+    statusFilter?: string,
+    limit = 100
+  ): Promise<DbVulnerabilityRecord[]> {
+    if (this.pool && this.isOnline) {
+      try {
+        let sql = `SELECT record_id, finding_id, developer_id, github_username, session_id,
+                          shift_id, vulnerability_type, severity, confidence, file_name,
+                          line_number, column_number, code_snippet, why_vulnerable, how_to_fix,
+                          fixed_code, attack_scenario, status, detected_by_rule, detected_at,
+                          fixed_at, updated_at
+                   FROM vulnerability_records WHERE 1=1`;
+        const params: any[] = [];
+
+        if (developerId) {
+          params.push(developerId);
+          sql += ` AND (developer_id = $${params.length} OR github_username = $${params.length})`;
+        }
+        if (statusFilter && statusFilter !== 'ALL') {
+          params.push(statusFilter);
+          sql += ` AND status = $${params.length}`;
+        }
+
+        sql += ` ORDER BY detected_at DESC LIMIT $${params.length + 1};`;
+        params.push(limit);
+
+        const res = await this.pool.query(sql, params);
+        return res.rows.map(this.mapDbRecord);
+      } catch (err: any) {
+        console.error('[NeonDb] getVulnerabilityRecords error:', err.message);
+      }
+    }
+
+    // Fallback
+    return this.getLocalRecords(developerId, statusFilter, limit);
+  }
+
+  // ─── Activity & Audit Logs API ──────────────────────────────────────────────
+
+  public async logActivity(activity: {
+    userId?: string;
+    username?: string;
+    developerId?: string;
+    githubUsername?: string;
+    actionType: string;
+    findingId?: string;
+    vulnerabilityType?: string;
+    details?: any;
+  }): Promise<void> {
+    const id = `ACT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    if (this.pool && this.isOnline) {
+      try {
+        await this.pool.query(
+          `INSERT INTO user_activity_logs (id, user_id, username, developer_id, github_username, action_type, finding_id, vulnerability_type, details, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());`,
+          [
+            id,
+            activity.userId || null,
+            activity.username || activity.developerId || 'system',
+            activity.developerId || null,
+            activity.githubUsername || null,
+            activity.actionType,
+            activity.findingId || null,
+            activity.vulnerabilityType || null,
+            JSON.stringify(activity.details || {}),
+          ]
+        );
+      } catch (err: any) {
+        console.error('[NeonDb] logActivity error:', err.message);
+      }
+    }
+  }
+
+  public async getRecentActivities(developerId?: string, limit = 20): Promise<UserActivityLog[]> {
+    if (!this.pool || !this.isOnline) { return []; }
+    try {
+      const sql = developerId
+        ? `SELECT * FROM user_activity_logs WHERE developer_id = $1 OR github_username = $1 ORDER BY created_at DESC LIMIT $2;`
+        : `SELECT * FROM user_activity_logs ORDER BY created_at DESC LIMIT $1;`;
+      const params = developerId ? [developerId, limit] : [limit];
+      const res = await this.pool.query(sql, params);
+      return res.rows.map(r => ({
+        id: r.id,
+        userId: r.user_id,
+        username: r.username,
+        developerId: r.developer_id,
+        githubUsername: r.github_username,
+        actionType: r.action_type,
+        findingId: r.finding_id,
+        vulnerabilityType: r.vulnerability_type,
+        details: r.details,
+        createdAt: r.created_at,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  // ─── Local Fallback Helpers ─────────────────────────────────────────────────
+
+  private getLocalUsers(): DbUser[] {
+    try {
+      const p = path.join(this.dataDir, 'users.json');
+      if (fs.existsSync(p)) {
+        const list = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return list.map((u: any) => ({
+          id: u.id,
+          username: u.username,
+          githubUsername: u.githubUsername || null,
+          passwordHash: u.passwordHash || '',
+          role: u.role || 'developer',
+          displayName: u.displayName || u.username,
+          email: u.email || '',
+          githubAvatarUrl: u.githubAvatarUrl || null,
+          createdAt: u.createdAt || new Date().toISOString(),
+          lastLoginAt: u.lastLoginAt || new Date().toISOString(),
+        }));
+      }
+    } catch { /* skip */ }
+    return [];
+  }
+
+  private saveLocalUser(user: DbUser): void {
+    try {
+      const p = path.join(this.dataDir, 'users.json');
+      const list = this.getLocalUsers();
+      const idx = list.findIndex(u => u.username === user.username);
+      if (idx >= 0) { list[idx] = user; }
+      else { list.push(user); }
+      fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
+    } catch { /* skip */ }
+  }
+
+  private removeLocalUser(userId: string): void {
+    try {
+      const p = path.join(this.dataDir, 'users.json');
+      const list = this.getLocalUsers().filter(u => u.id !== userId);
+      fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
+    } catch { /* skip */ }
+  }
+
+  private appendLocalRecord(developerId: string, record: DbVulnerabilityRecord): void {
+    try {
+      const p = path.join(this.dataDir, `${developerId}_vulnerability_records.json`);
+      let existing: any[] = [];
+      if (fs.existsSync(p)) {
+        existing = JSON.parse(fs.readFileSync(p, 'utf8'));
+      }
+      existing.push(record);
+      fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
+    } catch { /* skip */ }
+  }
+
+  private updateLocalRecordStatus(developerId: string, findingId: string, status: VulnerabilityStatus): void {
+    try {
+      const p = path.join(this.dataDir, `${developerId}_vulnerability_records.json`);
+      if (fs.existsSync(p)) {
+        const existing: any[] = JSON.parse(fs.readFileSync(p, 'utf8'));
+        let modified = false;
+        for (const r of existing) {
+          if (r.findingId === findingId || r.recordId === findingId) {
+            r.status = status;
+            if (status === 'FIXED') { r.fixedAt = new Date().toISOString(); }
+            modified = true;
+          }
+        }
+        if (modified) {
+          fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  private getLocalRecords(developerId?: string, statusFilter?: string, limit = 100): DbVulnerabilityRecord[] {
+    const records: DbVulnerabilityRecord[] = [];
+    try {
+      const files = fs.readdirSync(this.dataDir).filter(f => f.endsWith('_vulnerability_records.json'));
+      for (const file of files) {
+        const devId = file.replace('_vulnerability_records.json', '');
+        if (developerId && devId !== developerId) { continue; }
+        const raw = fs.readFileSync(path.join(this.dataDir, file), 'utf8');
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            const mapped = this.mapDbRecord(item);
+            if (!statusFilter || statusFilter === 'ALL' || mapped.status === statusFilter) {
+              records.push(mapped);
+            }
+          }
+        }
+      }
+    } catch { /* skip */ }
+    return records.slice(0, limit);
+  }
+
+  private calculateLocalStats(developerId?: string): VulnerabilityStats {
+    const list = this.getLocalRecords(developerId, 'ALL', 1000);
+    const stats: VulnerabilityStats = {
+      totalIdentified: list.length,
+      fixedCount: 0,
+      openCount: 0,
+      ignoredCount: 0,
+      fixPercentage: 0,
+      openPercentage: 0,
+      criticalCount: 0,
+      highCount: 0,
+      mediumCount: 0,
+      lowCount: 0,
+      byType: {},
+      byStatus: { OPEN: 0, FIXED: 0, IGNORED: 0, FALSE_POSITIVE: 0 },
+    };
+
+    for (const r of list) {
+      if (r.status === 'FIXED') stats.fixedCount++;
+      else if (r.status === 'IGNORED') stats.ignoredCount++;
+      else {
+        stats.openCount++;
+        if (r.severity === 'CRITICAL') stats.criticalCount++;
+        else if (r.severity === 'HIGH') stats.highCount++;
+        else if (r.severity === 'MEDIUM') stats.mediumCount++;
+        else stats.lowCount++;
+      }
+      stats.byStatus[r.status] = (stats.byStatus[r.status] || 0) + 1;
+      stats.byType[r.vulnerabilityType] = (stats.byType[r.vulnerabilityType] || 0) + 1;
+    }
+
+    if (stats.totalIdentified > 0) {
+      stats.fixPercentage = Math.round((stats.fixedCount / stats.totalIdentified) * 1000) / 10;
+      stats.openPercentage = Math.round((stats.openCount / stats.totalIdentified) * 1000) / 10;
+    } else {
+      stats.fixPercentage = 0.0;
+      stats.openPercentage = 0.0;
+    }
+    return stats;
+  }
+
+  // ─── Row Mappers ────────────────────────────────────────────────────────────
+
+  private mapDbUser(row: any): DbUser {
+    return {
+      id: row.id,
+      username: row.username,
+      githubUsername: row.github_username || null,
+      passwordHash: row.password_hash || '',
+      role: row.role as UserRole,
+      displayName: row.display_name,
+      email: row.email || '',
+      githubAvatarUrl: row.github_avatar_url || null,
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+      lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : new Date().toISOString(),
+    };
+  }
+
+  private mapDbRecord(row: any): DbVulnerabilityRecord {
+    return {
+      recordId: row.record_id || row.recordId,
+      findingId: row.finding_id || row.findingId,
+      developerId: row.developer_id || row.developerId,
+      githubUsername: row.github_username || row.githubUsername || null,
+      sessionId: row.session_id || row.sessionId,
+      shiftId: row.shift_id || row.shiftId || null,
+      vulnerabilityType: row.vulnerability_type || row.vulnerabilityType,
+      severity: row.severity,
+      confidence: parseFloat(row.confidence || '0.9'),
+      fileName: row.file_name || row.fileName,
+      lineNumber: parseInt(row.line_number || row.lineNumber || '1', 10),
+      columnNumber: parseInt(row.column_number || row.columnNumber || '0', 10),
+      codeSnippet: row.code_snippet || row.codeSnippet || '',
+      whyVulnerable: row.why_vulnerable || row.whyVulnerable || 'Vulnerable code detected.',
+      howToFix: row.how_to_fix || row.howToFix || 'Apply recommended secure coding fix.',
+      fixedCode: row.fixed_code || row.fixedCode || '// Secure replacement',
+      attackScenario: row.attack_scenario || row.attackScenario || 'Potential security exploit.',
+      status: (row.status as VulnerabilityStatus) || 'OPEN',
+      detectedByRule: row.detected_by_rule || row.detectedByRule || 'SENTINEL-RULE',
+      detectedAt: row.detected_at ? new Date(row.detected_at).toISOString() : (row.detectedAt || new Date().toISOString()),
+      fixedAt: row.fixed_at ? new Date(row.fixed_at).toISOString() : (row.fixedAt || null),
+      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+    };
+  }
+
+  public async close(): Promise<void> {
+    if (this.pool) {
+      await this.pool.end();
+      this.pool = null;
+      this.isOnline = false;
+    }
+  }
+}

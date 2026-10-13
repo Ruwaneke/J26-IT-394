@@ -26,6 +26,7 @@ import {
   Severity,
   VulnerabilityType,
   owaspCategoryFor,
+  computeFindingId,
 } from '../analyzer/types.js';
 
 // ─── Language groups ──────────────────────────────────────────────────────────
@@ -370,7 +371,7 @@ export abstract class PatternRule implements SecurityRule {
       const columnStart = lineStarts[lineNumber - 1] ?? 0;
 
       add({
-        id:             uuidv4(),
+        id:             computeFindingId(fileName, p.type, this.ruleId, snippet, 0),
         type:           p.type,
         severity:       p.severity,
         confidence,
@@ -408,7 +409,7 @@ export function makeFinding(args: {
   const line       = (args.text.split('\n')[lineNumber - 1] ?? '').trim();
 
   return {
-    id:             uuidv4(),
+    id:             computeFindingId(args.fileName, args.type, args.ruleId, line, 0),
     type:           args.type,
     severity:       args.severity,
     confidence:     Math.round(args.confidence * 100) / 100,

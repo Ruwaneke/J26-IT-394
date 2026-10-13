@@ -18,6 +18,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { NeonDatabaseService } from '../data/neonDatabaseService.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -140,6 +141,22 @@ export class AuthManager {
 
       await this.context.workspaceState.update(SESSION_KEY, session);
 
+      // Sync to Neon PostgreSQL
+      void NeonDatabaseService.getInstance().upsertGitHubUser({
+        login: profile.login,
+        name: profile.name ?? profile.login,
+        email: profile.email ?? `${profile.login}@github.com`,
+        avatar_url: profile.avatar_url,
+        role: user.role,
+      }).then(() => {
+        void NeonDatabaseService.getInstance().logActivity({
+          developerId: profile.login,
+          username: profile.login,
+          actionType: 'GITHUB_LOGIN',
+          details: { role: user.role, name: profile.name },
+        });
+      });
+
       console.log(
         `[AuthManager] GitHub login: ${profile.login} → role: ${user.role}`
       );
@@ -154,6 +171,95 @@ export class AuthManager {
       console.error('[AuthManager] GitHub login error:', err);
       return null;
     }
+  }
+
+  /**
+   * Switch or pick the active developer by their GitHub username.
+   * Enables selecting a developer from the team roster or entering a GitHub username.
+   */
+  async pickDeveloperByGitHub(githubUsername: string): Promise<AuthSession | null> {
+    const cleanGh = githubUsername.trim().replace(/^@/, '');
+    if (!cleanGh) { return null; }
+
+    const db = NeonDatabaseService.getInstance();
+    // 1. Check Neon PostgreSQL
+    try {
+      const dbUser = await db.getUserByUsernameOrGitHub(cleanGh);
+      if (dbUser) {
+        const session: AuthSession = {
+          userId:          dbUser.id,
+          username:        dbUser.username,
+          displayName:     dbUser.displayName,
+          role:            dbUser.role,
+          email:           dbUser.email,
+          loggedInAt:      new Date().toISOString(),
+          authMethod:      'github',
+          githubUsername:  dbUser.githubUsername || dbUser.username,
+          githubAvatarUrl: dbUser.githubAvatarUrl || `https://avatars.githubusercontent.com/${cleanGh}`,
+          githubName:      dbUser.displayName,
+        };
+        await this.context.workspaceState.update(SESSION_KEY, session);
+        await db.updateLastLogin(dbUser.id);
+        await db.logActivity({
+          developerId: session.githubUsername || session.username,
+          username: session.username,
+          actionType: 'DEVELOPER_SELECTED',
+          details: { githubUsername: cleanGh },
+        });
+        console.log(`[AuthManager] Picked developer from Neon DB: @${cleanGh}`);
+        return session;
+      }
+    } catch (err) {
+      console.warn('[AuthManager] Could not lookup developer in DB, checking local store:', err);
+    }
+
+    // 2. Fall back to local users or auto-provision
+    this.loadUsers();
+    let user = this.users.find(u =>
+      (u.githubUsername && u.githubUsername.toLowerCase() === cleanGh.toLowerCase()) ||
+      u.username.toLowerCase() === cleanGh.toLowerCase()
+    );
+
+    if (!user) {
+      user = {
+        id:              `user-dev-gh-${Date.now()}`,
+        username:        cleanGh,
+        passwordHash:    '',
+        role:            'developer',
+        displayName:     cleanGh,
+        email:           `${cleanGh}@github.com`,
+        createdAt:       new Date().toISOString(),
+        githubUsername:  cleanGh,
+        githubAvatarUrl: `https://avatars.githubusercontent.com/${cleanGh}`,
+      };
+      this.users.push(user);
+      this.saveUsers();
+    }
+
+    // Provision into Neon DB in the background
+    void db.upsertGitHubUser({
+      login: cleanGh,
+      name: user.displayName,
+      avatar_url: user.githubAvatarUrl,
+      role: 'developer',
+    });
+
+    const session: AuthSession = {
+      userId:          user.id,
+      username:        user.username,
+      displayName:     user.displayName,
+      role:            user.role,
+      email:           user.email,
+      loggedInAt:      new Date().toISOString(),
+      authMethod:      'github',
+      githubUsername:  user.githubUsername || user.username,
+      githubAvatarUrl: user.githubAvatarUrl,
+      githubName:      user.displayName,
+    };
+
+    await this.context.workspaceState.update(SESSION_KEY, session);
+    console.log(`[AuthManager] Picked & provisioned developer: @${cleanGh}`);
+    return session;
   }
 
   /**

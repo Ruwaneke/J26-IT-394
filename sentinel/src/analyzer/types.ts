@@ -4,6 +4,8 @@
  * Do NOT change field names without coordinating with Member 2.
  */
 
+import * as crypto from 'crypto';
+
 // ─── Severity ────────────────────────────────────────────────────────────────
 
 export enum Severity {
@@ -195,3 +197,26 @@ export interface VulnerabilityMetadata {
   secureExample: string;
   references: string[];
 }
+
+/**
+ * Computes a deterministic, stable finding ID across keystrokes and scan passes.
+ *
+ * This ensures:
+ * 1. An open vulnerability maintains the SAME ID across typing events.
+ * 2. It is only marked as FIXED when the insecure code is actually removed/corrected
+ *    and the diagnostic red underline disappears from the editor.
+ * 3. Does not generate duplicate records or churn false fix events.
+ */
+export function computeFindingId(
+  fileName: string,
+  type: string,
+  ruleId: string,
+  snippet: string,
+  occurrence: number = 0
+): string {
+  const normFile = (fileName || '').replace(/\\/g, '/').toLowerCase();
+  const normSnippet = (snippet || '').trim().replace(/\s+/g, ' ');
+  const raw = `${normFile}:${type}:${ruleId}:${normSnippet}:${occurrence}`;
+  return 'FND-' + crypto.createHash('sha256').update(raw).digest('hex').substring(0, 16);
+}
+

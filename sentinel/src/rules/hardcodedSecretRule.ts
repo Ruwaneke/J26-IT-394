@@ -23,6 +23,7 @@ import {
   SecurityRule,
   Severity,
   VulnerabilityType,
+  computeFindingId,
 } from '../analyzer/types.js';
 
 // ─── Pattern Definitions ──────────────────────────────────────────────────────
@@ -273,7 +274,7 @@ export class HardcodedSecretRule implements SecurityRule {
         );
 
         findings.push({
-          id:              uuidv4(),
+          id:              computeFindingId(fileName, VulnerabilityType.HARDCODED_SECRET, this.ruleId, lineContent.trim(), 0),
           type:            VulnerabilityType.HARDCODED_SECRET,
           severity:        pattern.severity,
           confidence:      pattern.baseConfidence,

@@ -49,6 +49,20 @@ export function generateContextualExplanation(finding: SecurityFinding): Context
       return explainDeserialization(finding);
     case VulnerabilityType.BROKEN_ACCESS_CONTROL:
       return explainBrokenAccess(finding);
+    case VulnerabilityType.SECURITY_MISCONFIGURATION:
+      return explainSecurityMisconfiguration(finding);
+    case VulnerabilityType.WEAK_CRYPTOGRAPHY:
+      return explainWeakCryptography(finding);
+    case VulnerabilityType.INSUFFICIENT_LOGGING:
+      return explainInsufficientLogging(finding);
+    case VulnerabilityType.SOFTWARE_INTEGRITY_FAILURE:
+      return explainIntegrityFailure(finding);
+    case VulnerabilityType.VULNERABLE_COMPONENT:
+      return explainVulnerableComponent(finding);
+    case VulnerabilityType.INSECURE_DESIGN:
+      return explainInsecureDesign(finding);
+    case VulnerabilityType.MISSING_INPUT_VALIDATION:
+      return explainMissingInputValidation(finding);
     default:
       return genericExplanation(finding);
   }
@@ -422,6 +436,118 @@ function explainBrokenAccess(finding: SecurityFinding): ContextualExplanation {
       `app.get('/admin', requireAuth, requireRole('admin'), handler);\n` +
       `const row = await db.findOne({ _id: id, ownerId: req.user.id });`,
     fixExplanation: 'Authorize on the server from the verified session, and include owner/tenant in every query.',
+  };
+}
+
+function explainSecurityMisconfiguration(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Security configuration is insecure or uses overly permissive defaults',
+    whyDangerous: finding.message,
+    attackScenario:
+      'An attacker leverages permissive CORS, exposed debug stack traces, or default headers to extract sensitive data or bypass origins.',
+    vulnerableCode: code,
+    fixedCode:
+      '// Disable debug mode & lock down CORS\n' +
+      'app.use(cors({ origin: ["https://trusted-domain.com"], credentials: true }));\n' +
+      'app.use(helmet());\n' +
+      'const DEBUG = false;',
+    fixExplanation: 'Lock down CORS origins, disable verbose error messages in production, and use security headers.',
+  };
+}
+
+function explainWeakCryptography(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Broken or deprecated cryptographic algorithm in use',
+    whyDangerous: finding.message,
+    attackScenario:
+      'An attacker uses precomputed rainbow tables or collision attacks against MD5/SHA-1 or cracks DES/ECB ciphertexts.',
+    vulnerableCode: code,
+    fixedCode:
+      '// Use modern secure cryptographic primitives\n' +
+      'const hash = await bcrypt.hash(password, 12);\n' +
+      'const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);',
+    fixExplanation: 'Migrate to modern algorithms: bcrypt/Argon2 for passwords, and AES-256-GCM or ChaCha20 for encryption.',
+  };
+}
+
+function explainInsufficientLogging(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Security events or failed authentications are not audited or logged',
+    whyDangerous: finding.message,
+    attackScenario:
+      'An attacker conducts brute force login attempts or credential stuffing without triggering alerts or leaving audit records.',
+    vulnerableCode: code,
+    fixedCode:
+      'logger.warn("Security Alert: Failed login attempt", { ip: req.ip, user: username, timestamp: new Date() });\n' +
+      'securityAuditLog.recordEvent("AUTH_FAILURE", { userId, reason: "Invalid credential" });',
+    fixExplanation: 'Log all security-critical operations (login failures, privilege escalations, token revocations) with timestamp & user context.',
+  };
+}
+
+function explainIntegrityFailure(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'External asset or dependency loaded without Subresource Integrity verification',
+    whyDangerous: finding.message,
+    attackScenario:
+      'If the remote CDN is breached or DNS is spoofed, attackers can inject malicious JavaScript into your users sessions.',
+    vulnerableCode: code,
+    fixedCode:
+      '<script src="https://cdn.jsdelivr.net/npm/library@1.2.3/dist/index.min.js"\n' +
+      '  integrity="sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8n"\n' +
+      '  crossorigin="anonymous"></script>',
+    fixExplanation: 'Include cryptographic integrity hashes (SRI) on all external scripts and style sheets.',
+  };
+}
+
+function explainVulnerableComponent(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Dependency with known security advisory (CVE) detected',
+    whyDangerous: finding.message,
+    attackScenario:
+      'Publicly known exploits can be executed against known vulnerable library versions directly over the network.',
+    vulnerableCode: code,
+    fixedCode:
+      '// Upgrade component to patched version via package manager\n' +
+      'npm audit fix\n' +
+      '// Or specify exact secure version in package.json',
+    fixExplanation: 'Upgrade the package to a version that addresses the reported CVE advisory.',
+  };
+}
+
+function explainInsecureDesign(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Security control relies on client-side logic or lacks rate-limiting architecture',
+    whyDangerous: finding.message,
+    attackScenario:
+      'An attacker uses direct HTTP tools (cURL, Postman) to bypass client-side checks and flood endpoints or perform unauthorized transactions.',
+    vulnerableCode: code,
+    fixedCode:
+      '// Server-side validation and rate limiting\n' +
+      'const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });\n' +
+      'app.use("/api/", limiter);\n' +
+      'if (!serverSideValidator(req.body)) { throw new Error("Invalid"); }',
+    fixExplanation: 'Implement architectural guardrails: server-side business logic validation, token bucket rate limits, and zero-trust.',
+  };
+}
+
+function explainMissingInputValidation(finding: SecurityFinding): ContextualExplanation {
+  const code = finding.codeSnippet;
+  return {
+    headline: 'Untrusted user input processed without schema validation or boundary checks',
+    whyDangerous: finding.message,
+    attackScenario:
+      'Maliciously oversized strings, negative numbers, or unexpected data structures bypass assumptions and trigger buffer or logic flaws.',
+    vulnerableCode: code,
+    fixedCode:
+      'const userSchema = z.object({ username: z.string().min(3).max(30), age: z.number().int().positive() });\n' +
+      'const parsed = userSchema.parse(req.body);',
+    fixExplanation: 'Use strict schema validation (such as Zod or Joi) before parsing or processing user-supplied parameters.',
   };
 }
 

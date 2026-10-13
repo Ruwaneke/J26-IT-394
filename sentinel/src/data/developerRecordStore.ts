@@ -19,6 +19,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { SecurityFinding } from '../analyzer/types.js';
+import { NeonDatabaseService } from './neonDatabaseService.js';
+import { generateContextualExplanation } from '../diagnostics/contextualExplainer.js';
 
 // ─── Record Schema ─────────────────────────────────────────────────────────────
 
@@ -103,18 +105,40 @@ export class DeveloperRecordStore {
    * @param finding   - The SecurityFinding from the analyzer.
    * @param sessionId - The current session ID (from SecurityEventClient.getSessionId()).
    */
-  async save(finding: SecurityFinding, sessionId: string): Promise<void> {
+  async save(
+    finding: SecurityFinding,
+    sessionId: string,
+    overrideDeveloperId?: string,
+    overrideGithubUsername?: string | null
+  ): Promise<void> {
     // Skip duplicates within the same session
     if (this.savedFindingIds.has(finding.id)) {
       return;
     }
 
-    const { developerId, githubUsername } = await this.resolveIdentity();
+    let developerId = overrideDeveloperId;
+    let githubUsername = overrideGithubUsername ?? null;
+    if (!developerId) {
+      const resolved = await this.resolveIdentity();
+      developerId = resolved.developerId;
+      githubUsername = resolved.githubUsername;
+    }
+
     const record = this.buildRecord(finding, developerId, githubUsername, sessionId);
 
     try {
       await this.appendRecord(developerId, record);
       this.savedFindingIds.add(finding.id);
+
+      // Persist to Neon PostgreSQL with full contextual explanation & status
+      const explanation = generateContextualExplanation(finding);
+      void NeonDatabaseService.getInstance().saveVulnerabilityRecord(
+        finding,
+        developerId,
+        githubUsername,
+        sessionId,
+        explanation
+      );
     } catch (err) {
       // Never let a write error crash the extension
       console.error('[Sentinel] DeveloperRecordStore: Failed to save record:', err);

@@ -19,6 +19,7 @@ import {
   SecurityRule,
   Severity,
   VulnerabilityType,
+  computeFindingId,
 } from '../analyzer/types.js';
 
 // ─── Pattern Definitions ──────────────────────────────────────────────────────
@@ -203,7 +204,7 @@ export class SqlInjectionRule implements SecurityRule {
         const confidence = this.computeConfidence(pattern, surroundingContext);
 
         findings.push({
-          id:              uuidv4(),
+          id:              computeFindingId(fileName, VulnerabilityType.SQL_INJECTION, this.ruleId, lineContent.trim(), 0),
           type:            VulnerabilityType.SQL_INJECTION,
           severity:        Severity.HIGH,
           confidence,

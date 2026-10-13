@@ -18,6 +18,7 @@ import { DeveloperAction, SecurityFinding } from './analyzer/types.js';
 import { VULNERABILITY_METADATA } from './diagnostics/vulnerabilityMetadata.js';
 import { generateContextualExplanation } from './diagnostics/contextualExplainer.js';
 import { DeveloperRecordStore } from './data/developerRecordStore.js';
+import { NeonDatabaseService } from './data/neonDatabaseService.js';
 import { AuthManager } from './auth/authManager.js';
 import { buildLoginHtml } from './webview/loginView.js';
 import { buildDeveloperDashboardHtml } from './webview/developerDashboard.js';
@@ -85,6 +86,17 @@ export function activate(context: vscode.ExtensionContext): void {
   // Initialise auth manager — role-based login system
   authManager = new AuthManager(context);
   log('🔐 Auth manager initialised.');
+
+  // Initialise Neon PostgreSQL database service
+  const neonDb = NeonDatabaseService.getInstance(context.extensionPath);
+  neonDb.initialize().then(ok => {
+    if (ok) {
+      log('⚡ Connected to Neon PostgreSQL database.');
+      void refreshDashboard();
+    } else {
+      log('⚠️ Neon PostgreSQL offline, using local storage mode.');
+    }
+  });
 
   // ── Silently restore GitHub session (no prompt shown) ────────────────────────
   // If the developer was previously signed in via GitHub, restore their
@@ -249,6 +261,7 @@ export function deactivate(): void {
   eventClient.dispose();
   recordStore.dispose();
   outputChannel.dispose();
+  void NeonDatabaseService.getInstance().close();
   // Clear all pending debounce timers
   debounceTimers.forEach(t => clearTimeout(t));
   debounceTimers.clear();
@@ -322,10 +335,24 @@ async function analyzeDocument(
     void eventClient.reportDetection(finding);
   }
 
-  // ── Step 5: Persist developer vulnerability record to DATA/ ─────────────
+  // ── Step 5: Persist developer vulnerability record to DATA/ and Neon DB ──
+  const githubUser = authManager?.getSession()?.githubUsername ?? null;
   for (const finding of findings) {
-    void recordStore.save(finding, sessionId);
+    void recordStore.save(finding, sessionId, developerId, githubUser);
   }
+
+  // ── Step 5b: Auto-detect fixed findings in this file via Neon DB ────────
+  const activeFindingIds = findings.map(f => f.id);
+  void NeonDatabaseService.getInstance().autoDetectFixedFindingsInFile(
+    fileName,
+    developerId,
+    activeFindingIds
+  ).then(fixedCount => {
+    if (fixedCount > 0) {
+      log(`[NeonDb] Auto-marked ${fixedCount} finding(s) as FIXED in ${fileName.split('/').pop()}`);
+      void refreshDashboard();
+    }
+  });
 
   // ── Step 6: Show terminal alert for HIGH/CRITICAL findings ──────────────
   if (findings.some(f => f.severity === 'HIGH' || f.severity === 'CRITICAL')) {
@@ -447,6 +474,11 @@ function findFindingById(findingId: string): SecurityFinding | undefined {
  * Priority: GitHub username → sentinel.developerId config → 'DEV_UNKNOWN'
  */
 async function resolveDeveloperId(): Promise<string> {
+  if (authManager?.isLoggedIn()) {
+    const s = authManager.getSession();
+    if (s?.githubUsername) return s.githubUsername;
+    if (s?.username) return s.username;
+  }
   try {
     const session = await vscode.authentication.getSession('github', ['user:email'], { silent: true });
     if (session?.account?.label) {
@@ -498,7 +530,7 @@ class SentinelCodeActionProvider implements vscode.CodeActionProvider {
  * - If no session → show login screen.
  * - If session → route to the correct role dashboard.
  */
-function refreshDashboard(): void {
+async function refreshDashboard(): Promise<void> {
   if (!dashboardPanel) { return; }
 
   const logoUri = dashboardPanel.webview.asWebviewUri(
@@ -518,6 +550,7 @@ function refreshDashboard(): void {
   for (const findings of findingsCache.values()) { allFindings.push(...findings); }
   const summary = analyzer.summarize(allFindings);
   const dataDir = path.join(extensionContext.extensionPath, 'src', 'data');
+  const db = NeonDatabaseService.getInstance();
 
   if (session.role === 'developer') {
     dashboardPanel.title = `Sentinel — ${session.displayName}`;
@@ -525,13 +558,38 @@ function refreshDashboard(): void {
     const assignedShifts = projectStore.getShiftsForDeveloper(devId);
     const activeSession  = projectStore.getActiveSession(devId);
     const recentSessions = projectStore.getSessionsForDeveloper(devId);
+
+    // Fetch live statistics and vulnerability tracking records from Neon PostgreSQL
+    let stats: any;
+    let dbRecords: any[] = [];
+    let activities: any[] = [];
+    const dbStatus = db.getStatus();
+
+    try {
+      [stats, dbRecords, activities] = await Promise.all([
+        db.getVulnerabilityStats(devId),
+        db.getVulnerabilityRecords(devId, 'ALL', 100),
+        db.getRecentActivities(devId, 25),
+      ]);
+    } catch (e) {
+      console.warn('[Sentinel] Error querying Neon DB for dashboard:', e);
+    }
+
     dashboardPanel.webview.html = buildDeveloperDashboardHtml(
-      summary, allFindings, session, logoUri, cspSource,
+      summary,
+      allFindings,
+      session,
+      logoUri,
+      cspSource,
       analyzer.getRules().length,
       eventClient?.getSessionId() ?? 'N/A',
       assignedShifts,
       activeSession,
       recentSessions,
+      stats,
+      dbRecords,
+      dbStatus,
+      activities
     );
   } else if (session.role === 'supervisor') {
     dashboardPanel.title = 'Sentinel — Supervisor Dashboard';
@@ -783,12 +841,83 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
     }
 
     case 'REFRESH_ADMIN': {
-      refreshDashboard();
+      void refreshDashboard();
+      break;
+    }
+
+    case 'APPLY_FIX': {
+      const findingId = message.findingId as string;
+      const fileName = message.fileName as string;
+      const line = message.line as number;
+      const fixedCode = message.fixedCode as string;
+
+      applyCodeFixDirectly(fileName, line, fixedCode).then(applied => {
+        if (applied) {
+          vscode.window.showInformationMessage(`✅ Secure fix applied to ${fileName.split('/').pop()}:${line}! Re-analyzing code to verify fix...`);
+        } else {
+          vscode.window.showErrorMessage(`Could not apply fix directly to ${fileName.split('/').pop()}`);
+        }
+      });
+      break;
+    }
+
+    case 'MARK_FIXED': {
+      vscode.window.showInformationMessage(
+        'Sentinel: Vulnerabilities are automatically marked as FIXED only when the problem is corrected in your code and the red squiggly line disappears.'
+      );
+      break;
+    }
+
+    case 'MARK_IGNORED': {
+      const findingId = message.findingId as string;
+      const sess = authManager.getSession();
+      const devId = sess?.githubUsername ?? sess?.username ?? 'DEV_UNKNOWN';
+      NeonDatabaseService.getInstance().updateVulnerabilityStatus(findingId, devId, 'IGNORED', sess?.username).then(() => {
+        vscode.window.showInformationMessage(`Vulnerability marked as IGNORED.`);
+        void refreshDashboard();
+      });
+      break;
+    }
+
+    case 'JUMP_TO_CODE': {
+      const fileName = message.fileName as string;
+      const line = Math.max(0, (message.line as number) - 1);
+      vscode.workspace.openTextDocument(fileName).then(doc => {
+        vscode.window.showTextDocument(doc, {
+          selection: new vscode.Range(line, 0, line, 100),
+          preview: false,
+        });
+      });
       break;
     }
 
     default:
       break;
+  }
+}
+
+async function applyCodeFixDirectly(
+  fileName: string,
+  lineNumber: number,
+  fixedCode: string
+): Promise<boolean> {
+  try {
+    const doc = await vscode.workspace.openTextDocument(fileName);
+    const lineIndex = Math.max(0, lineNumber - 1);
+    if (lineIndex >= doc.lineCount) {
+      return false;
+    }
+    const line = doc.lineAt(lineIndex);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, line.range, fixedCode);
+    const success = await vscode.workspace.applyEdit(edit);
+    if (success) {
+      await doc.save();
+    }
+    return success;
+  } catch (err) {
+    console.error('[Sentinel] Error applying code fix:', err);
+    return false;
   }
 }
 
