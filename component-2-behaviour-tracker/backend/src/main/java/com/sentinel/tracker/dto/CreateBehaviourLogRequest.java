@@ -26,7 +26,16 @@ public class CreateBehaviourLogRequest {
     private Long securityEventId;
 
     @NotNull(message = "actionType must not be null")
+    @com.fasterxml.jackson.annotation.JsonAlias("action")
     private BehaviourAction actionType;
+
+    public BehaviourAction getAction() {
+        return this.actionType;
+    }
+
+    public void setAction(BehaviourAction action) {
+        this.actionType = action;
+    }
 
     /**
      * Timestamp of the action. Defaults to now if not provided.
