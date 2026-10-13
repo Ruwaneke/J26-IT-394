@@ -32,6 +32,7 @@ def test_week_with_events(tiny_events, tiny_sessions, tiny_cfg):
     assert r["severity_weighted_load"] == 3 + 1 + 2
     assert r["count_sql_injection"] == 2 and r["count_xss"] == 1
     assert r["repeat_count"] == 0          # same-week repeats do not count
+    assert r["repeat_type_rate"] == 0.0
     assert r["n_sessions"] == 2
     assert r["intro_rate_per_session"] == pytest.approx(1.5)
 
@@ -46,11 +47,20 @@ def test_clean_session_week(tiny_events, tiny_sessions, tiny_cfg):
 
 def test_repeat_within_lookback(tiny_events, tiny_sessions, tiny_cfg):
     r = row(build_developer_weeks(tiny_events, tiny_cfg, tiny_sessions), "DEV_A", 3)
-    assert r["vuln_count"] == 2
-    assert r["repeat_count"] == 1          # SQLi seen 2 weeks earlier; command injection is new
-    assert r["fix_rate"] == pytest.approx(0.5)
+    assert r["vuln_count"] == 3
+    assert r["repeat_count"] == 1          # only (SQLi, a.py) was flagged before
+    assert r["repeat_type_rate"] == pytest.approx(2 / 3)   # both SQLi events repeat the type
+    assert r["fix_rate"] == pytest.approx(1 / 3)
     assert r["avg_response_time"] == pytest.approx(100.0)
-    assert r["intro_rate_per_session"] == pytest.approx(2.0)
+    assert r["intro_rate_per_session"] == pytest.approx(3.0)
+
+
+def test_repeat_outside_lookback_does_not_count(tiny_events, tiny_sessions, tiny_cfg):
+    tiny_cfg["features"]["repeat_lookback_weeks"] = 1
+    tiny_cfg["features"]["repeat_type_lookback_weeks"] = 1
+    r = row(build_developer_weeks(tiny_events, tiny_cfg, tiny_sessions), "DEV_A", 3)
+    assert r["repeat_count"] == 0          # week 1 is 2 weeks back
+    assert r["repeat_type_rate"] == 0.0
 
 
 def test_inactive_week(tiny_events, tiny_sessions, tiny_cfg):

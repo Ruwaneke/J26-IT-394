@@ -39,6 +39,16 @@ def test_events_follow_schema(small_cfg):
     assert len(profiles) == 8
 
 
+def test_working_set_files(small_cfg):
+    events, _, profiles = simulate(small_cfg)
+    lo, hi = small_cfg["simulation"]["working_set_size"]
+    for p in profiles:
+        files = {e["fileName"] for e in events if e["developerId"] == p["developerId"]}
+        assert lo <= p["workingSetSize"] <= hi
+        assert len(files) <= p["workingSetSize"]
+        assert files <= set(small_cfg["simulation"]["file_pool"])
+
+
 def test_archetype_counts_follow_mix(cfg):
     _, _, profiles = simulate(cfg)
     counts = {a: sum(p["archetype"] == a for p in profiles) for a in cfg["simulation"]["archetype_mix"]}

@@ -43,7 +43,8 @@ in `config.yaml`.
 | `vuln_count` | detections in the week |
 | `fix_rate`, `ignore_rate`, `false_positive_rate` | share of the week's detections with that action (NaN if no detections) |
 | `avg_response_time` | mean seconds from detection to action |
-| `repeat_count` | detections whose type was also detected for that developer in the previous 2 weeks |
+| `repeat_count` | detections whose (type, file) pair was also flagged for that developer in the previous 4 weeks |
+| `repeat_type_rate` | secondary: share of detections whose type alone was seen in the previous 2 weeks (NaN if no detections) |
 | `severity_weighted_load` | sum of severity weights, LOW=1, MEDIUM=2, HIGH=3 |
 | `count_<type>` | detections per vulnerability type |
 | `n_sessions`, `active` | sessions in the week; active = at least one session |
@@ -98,10 +99,13 @@ weeks have `1 + Poisson(3)` sessions on random weekdays between 09:00 and
 
 **Each detection.**
 - Count per session ~ Poisson(`lambda` for that week).
-- Type: with the repeat propensity, a type seen in the previous 2 weeks is
-  reused. Otherwise the type is drawn from the developer's own type mix (a
-  Dirichlet around the global mix SQLi 35%, XSS 30%, secrets 20%, command
-  injection 15%, concentration 8).
+- Type and file: with the repeat propensity, a (type, file) pair flagged for
+  this developer in the previous 4 weeks is reused (chosen uniformly). Otherwise
+  a fresh pair is drawn: the type from the developer's own type mix (a Dirichlet
+  around the global mix SQLi 35%, XSS 30%, secrets 20%, command injection 15%,
+  concentration 8) and the file from their working set. Fresh draws reject
+  recently flagged pairs (up to 20 tries), so a "fresh" detection is not a
+  hidden repeat and the measured repeat rate follows the latent propensity.
 - Severity depends on type (for example, command injection is 70% HIGH and XSS
   is 30% HIGH). See `severity_by_type`.
 - Confidence ~ Beta by severity (higher severity means higher confidence).
@@ -110,18 +114,28 @@ weeks have `1 + Poisson(3)` sessions on random weekdays between 09:00 and
 - Response time ~ lognormal(median, log-sd 0.8). Non-fix actions use 0.3x the
   median, because dismissing a warning is faster than fixing code.
 - `fixedAt = detectedAt + responseTime` only for FIXED.
-- File name comes from a small per-type list, and the line number is uniform in 1-400.
+- Line number is uniform in 1-400.
+
+**Working set.** Each developer works on 6-12 files (uniform) drawn from a pool
+of 26 file names. Usage across those files is uneven, with weights from
+Dirichlet(0.6). An alpha below 1 makes a few "hot" files take most detections,
+as in real projects where some modules are edited far more often.
 
 **Ground truth.** `developers.csv` stores each developer's archetype. It is used
 only for sanity checks and must never be a model input.
 
 ## Known limitations
 
-- **`repeat_count` is close to saturated.** With 4 types and about 10
-  detections per developer over 2 weeks, roughly 86% of detections count as
-  repeats. The feature therefore mostly tracks `vuln_count`. A narrower key,
-  such as same type in the same file, would separate developers better.
-  *Open decision.*
+- **Why `repeat_count` uses (type, file).** A type-only definition (2-week
+  lookback) was nearly saturated. With 4 types, 86% of detections counted as
+  repeats, and the Pearson correlation with `vuln_count` was 0.94. The
+  (type, file) key over 4 weeks gives a 43% repeat share and r = 0.83. The raw
+  count still grows with volume, but the repeat *rate*
+  (`repeat_count / vuln_count`) has r = 0.13 with `vuln_count`, so use the rate
+  when volume should not matter. The archetype signal is now visible:
+  worsening developers go from 41% to 64% repeats between the two halves of the
+  study, and improving developers from 38% to 29%. Weeks 1-4 have fewer
+  possible repeats because the lookback window is still filling.
 - Trajectories are linear (or AR(1)). Real learning curves are likely to be
   non-linear and partly driven by the feedback itself, which the simulator
   does not model.

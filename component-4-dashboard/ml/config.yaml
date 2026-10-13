@@ -22,7 +22,8 @@ vulnerability_types: [SQL_INJECTION, XSS, HARDCODED_SECRET, COMMAND_INJECTION]
 severity_weights: {LOW: 1, MEDIUM: 2, HIGH: 3}
 
 features:
-  repeat_lookback_weeks: 2    # an event is a "repeat" if its type was seen in the previous N weeks
+  repeat_lookback_weeks: 4        # repeat_count: same (type, file) flagged in the previous N weeks
+  repeat_type_lookback_weeks: 2   # repeat_type_rate: same type flagged in the previous N weeks
 
 trends:
   moving_average_window: 4
@@ -74,7 +75,8 @@ simulation:
   response_sigma: 0.8
   quick_action_factor: 0.3       # IGNORED / DISMISSED / FALSE_POSITIVE are faster than a fix
 
-  # Repeat propensity: chance a new detection re-uses a type seen in the last 2 weeks
+  # Repeat propensity: chance a new detection re-uses a (type, file) pair the developer
+  # was flagged for in the previous repeat_lookback_weeks (4) weeks
   repeat_propensity:
     improving: [0.50, 0.20]
     stagnant: [0.40, 0.40]
@@ -98,9 +100,35 @@ simulation:
     MEDIUM: [7, 2.5]
     HIGH: [9, 1.5]
 
-  file_names:
-    SQL_INJECTION: [UserRepository.java, OrderDao.cs, reports.py, db.ts]
-    XSS: [ProfileView.tsx, comments.js, template.html, SearchPage.jsx]
-    HARDCODED_SECRET: [config.py, AppSettings.cs, client.ts, application.properties]
-    COMMAND_INJECTION: [backup.py, Deploy.java, exec_utils.js, Tools.cs]
+  # Each developer works on a working set of files drawn from this pool
+  working_set_size: [6, 12]          # inclusive range, uniform per developer
+  file_usage_concentration: 0.6      # Dirichlet alpha; < 1 gives uneven usage (a few "hot" files)
+  fresh_pair_max_tries: 20           # fresh detections avoid recently flagged (type, file) pairs
+  file_pool:
+    - UserRepository.java
+    - OrderController.java
+    - PaymentService.java
+    - Deploy.java
+    - AuthFilter.java
+    - OrderDao.cs
+    - AppSettings.cs
+    - AccountController.cs
+    - Tools.cs
+    - ReportBuilder.cs
+    - reports.py
+    - config.py
+    - backup.py
+    - views.py
+    - tasks.py
+    - db.ts
+    - client.ts
+    - api.ts
+    - ProfileView.tsx
+    - SearchPage.tsx
+    - comments.js
+    - exec_utils.js
+    - server.js
+    - upload.js
+    - template.html
+    - application.properties
   max_line_number: 400

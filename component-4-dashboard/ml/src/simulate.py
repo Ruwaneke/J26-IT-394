@@ -13,12 +13,13 @@ How it works
      - fix propensity                  p_fix(t)
      - share of non-fixes that are ignored (the rest are dismissed)
      - median response time (lognormal)
-     - repeat propensity (re-using a type seen in the previous 2 weeks)
+     - repeat propensity (re-using a (type, file) pair flagged in the previous 4 weeks)
    Improving/worsening move linearly between a start and end value; stagnant
    stays flat; erratic adds a random walk so its direction is unpredictable.
 3. Each week: the developer may be inactive; otherwise they have a number of
    sessions, each session has Poisson(lambda) detections, and each detection
-   gets a type, severity, confidence, action and response time.
+   gets a type, file, severity, confidence, action and response time.
+   Each developer works on a fixed working set of 6-12 files with uneven usage.
 
 Randomness uses one numpy SeedSequence: each developer gets its own child
 generator, so the output is identical for the same seed and config.
@@ -112,7 +113,13 @@ def developer_trajectories(archetype, sim, n_weeks, rng):
     alpha = np.array([sim["type_mix"][k] for k in types]) * sim["type_mix_concentration"]
     type_mix = rng.dirichlet(alpha)
 
+    lo, hi = sim["working_set_size"]
+    files = [str(f) for f in rng.choice(sim["file_pool"], size=int(rng.integers(lo, hi + 1)), replace=False)]
+    file_weights = rng.dirichlet(np.full(len(files), sim["file_usage_concentration"]))
+
     return {
+        "files": files,
+        "file_weights": file_weights,
         "base_rate": base,
         "rate": rate,
         "fp_rate": fp_rate,
@@ -134,11 +141,25 @@ def simulate_developer(dev_id, archetype, cfg, rng):
     traj = developer_trajectories(archetype, sim, n_weeks, rng)
 
     events, sessions = [], []
-    types_by_week = {}  # week -> set of types detected that week (for repeats)
+    pairs_by_week = {}  # week -> set of (type, file) pairs flagged that week (for repeats)
+
+    def fresh_pair(recent):
+        """Draw a (type, file) from the developer's type mix and file usage, avoiding recent pairs.
+
+        A detection that is not a repeat should, by definition, not hit a pair
+        flagged in the lookback window. Rejection sampling keeps the measured
+        repeat rate close to the latent repeat propensity.
+        """
+        for _ in range(sim["fresh_pair_max_tries"]):
+            pair = (str(rng.choice(traj["types"], p=traj["type_mix"])),
+                    str(rng.choice(traj["files"], p=traj["file_weights"])))
+            if pair not in recent:
+                break
+        return pair
 
     for w in range(n_weeks):
         week_no = w + 1
-        types_by_week[week_no] = set()
+        pairs_by_week[week_no] = set()
         if rng.random() < sim["p_inactive_week"]:
             continue
 
@@ -150,7 +171,7 @@ def simulate_developer(dev_id, archetype, cfg, rng):
             + timedelta(hours=float(rng.uniform(sim["workday_start_hour"], sim["workday_end_hour"] - 2)))
             for _ in range(n_sessions)
         )
-        recent = set().union(*(types_by_week.get(week_no - k, set()) for k in range(1, lookback + 1)))
+        recent = set().union(*(pairs_by_week.get(week_no - k, set()) for k in range(1, lookback + 1)))
 
         for s_idx, s_start in enumerate(session_starts, start=1):
             session_id = f"SESSION-{dev_id}-W{week_no:02d}-{s_idx}"
@@ -158,10 +179,11 @@ def simulate_developer(dev_id, archetype, cfg, rng):
 
             for _ in range(rng.poisson(traj["rate"][w])):
                 if recent and rng.random() < traj["repeat"][w]:
-                    vtype = str(rng.choice(sorted(recent)))
+                    ordered = sorted(recent)
+                    vtype, file_name = ordered[int(rng.integers(len(ordered)))]
                 else:
-                    vtype = str(rng.choice(traj["types"], p=traj["type_mix"]))
-                types_by_week[week_no].add(vtype)
+                    vtype, file_name = fresh_pair(recent)
+                pairs_by_week[week_no].add((vtype, file_name))
 
                 severity = str(rng.choice(SEVERITIES, p=sim["severity_by_type"][vtype]))
                 confidence = float(np.clip(rng.beta(*sim["confidence_beta"][severity]), 0.0, 1.0))
@@ -185,7 +207,7 @@ def simulate_developer(dev_id, archetype, cfg, rng):
                     "vulnerabilityType": vtype,
                     "severity": severity,
                     "confidence": round(confidence, 3),
-                    "fileName": str(rng.choice(sim["file_names"][vtype])),
+                    "fileName": file_name,
                     "lineNumber": int(rng.integers(1, sim["max_line_number"] + 1)),
                     "detectedAt": _iso(detected),
                     "action": action,
@@ -198,6 +220,7 @@ def simulate_developer(dev_id, archetype, cfg, rng):
         "archetype": archetype,
         "baseRate": round(traj["base_rate"], 4),
         "falsePositiveRate": round(traj["fp_rate"], 4),
+        "workingSetSize": len(traj["files"]),
     }
     return events, sessions, profile
 

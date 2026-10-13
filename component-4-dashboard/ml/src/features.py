@@ -8,9 +8,14 @@ Design choices
 - Rates are NaN when undefined. A week with zero detections has no fix rate;
   writing 0 would wrongly say "fixed nothing". Counts are 0 in that case.
 - Rates are per event in that week: fix_rate = fixed / detections.
-- repeat_count counts events whose vulnerability type was also detected for
-  the same developer in any of the previous N weeks (N = 2 in config). It
-  measures "the same mistake keeps coming back".
+- repeat_count counts events whose (vulnerability type, file) pair was also
+  flagged for the same developer in any of the previous 4 weeks. It measures
+  "the same mistake keeps coming back in the same place". Same-week repeats do
+  not count, so the first detection of a new pair is never a repeat.
+- repeat_type_rate (secondary) is the share of the week's events whose type
+  alone was seen in the previous 2 weeks. With only 4 types this is close to
+  saturated (most types are always "recent"), which is why repeat_count uses
+  the narrower (type, file) key.
 - severity_weighted_load = sum of severity weights (LOW=1, MEDIUM=2, HIGH=3),
   so one HIGH detection weighs as much as three LOW ones.
 - intro_rate_per_session = detections / sessions. Sessions come from
@@ -49,12 +54,13 @@ def week_index(timestamps, start_date):
     return ((ts - start).dt.days // 7 + 1).astype(int)
 
 
-def _repeat_flags(ev, lookback):
-    """True for each event whose type was seen by that developer in the previous `lookback` weeks."""
-    seen = set(zip(ev["developerId"], ev["week"], ev["vulnerabilityType"]))
+def _repeat_flags(ev, key_columns, lookback):
+    """True for each event whose key (e.g. type and file) was seen by that developer in the previous `lookback` weeks."""
+    keys = list(zip(*(ev[c] for c in key_columns)))
+    seen = set(zip(ev["developerId"], ev["week"], keys))
     return np.array([
-        any((dev, week - k, vtype) in seen for k in range(1, lookback + 1))
-        for dev, week, vtype in zip(ev["developerId"], ev["week"], ev["vulnerabilityType"])
+        any((dev, week - k, key) in seen for k in range(1, lookback + 1))
+        for dev, week, key in zip(ev["developerId"], ev["week"], keys)
     ], dtype=bool)
 
 
@@ -68,7 +74,8 @@ def build_developer_weeks(events, cfg, sessions=None):
     ev = events.copy()
     ev["week"] = week_index(ev["detectedAt"], start)
     ev = ev[(ev["week"] >= 1) & (ev["week"] <= n_weeks)]
-    ev["is_repeat"] = _repeat_flags(ev, cfg["features"]["repeat_lookback_weeks"])
+    ev["is_repeat"] = _repeat_flags(ev, ["vulnerabilityType", "fileName"], cfg["features"]["repeat_lookback_weeks"])
+    ev["is_type_repeat"] = _repeat_flags(ev, ["vulnerabilityType"], cfg["features"]["repeat_type_lookback_weeks"])
     ev["severity_weight"] = ev["severity"].map(weights)
 
     developers = set(ev["developerId"])
@@ -95,17 +102,19 @@ def build_developer_weeks(events, cfg, sessions=None):
         out[col] = actions[action] if action in actions else 0
     out["avg_response_time"] = g["responseTime"].mean()
     out["repeat_count"] = g["is_repeat"].sum()
+    out["n_type_repeats"] = g["is_type_repeat"].sum()
     out["severity_weighted_load"] = g["severity_weight"].sum()
     types = ev.pivot_table(index=["developerId", "week"], columns="vulnerabilityType",
                            values="eventId", aggfunc="count")
     for vtype in vtypes:
         out[type_column(vtype)] = types[vtype] if vtype in types else 0
 
-    count_cols = ["n_sessions", "vuln_count", *ACTION_COLUMNS.values(), "repeat_count",
+    count_cols = ["n_sessions", "vuln_count", *ACTION_COLUMNS.values(), "repeat_count", "n_type_repeats",
                   "severity_weighted_load", *(type_column(v) for v in vtypes)]
     out[count_cols] = out[count_cols].fillna(0).astype(int)
 
     has_events = out["vuln_count"] > 0
+    out["repeat_type_rate"] = (out.pop("n_type_repeats") / out["vuln_count"]).where(has_events)
     out["fix_rate"] = (out["n_fixed"] / out["vuln_count"]).where(has_events)
     out["ignore_rate"] = (out["n_ignored"] / out["vuln_count"]).where(has_events)
     out["false_positive_rate"] = (out["n_false_positive"] / out["vuln_count"]).where(has_events)
