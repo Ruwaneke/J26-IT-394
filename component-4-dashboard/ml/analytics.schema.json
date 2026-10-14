@@ -1,0 +1,367 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sentinel-component4-analytics",
+  "title": "Component 4 analytics contract",
+  "description": "Single file read by the dashboard. dataSource 'simulated' means the content is generated from stated assumptions, not real developer data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meta", "overview", "trends", "forecast", "forecastEvaluation", "risk", "riskEvaluation",
+               "correlations", "recommendations", "keyFindings"],
+  "$defs": {
+    "nnum": {"type": ["number", "null"]},
+    "band": {"enum": ["LOW", "MEDIUM", "HIGH"]},
+    "meanStd": {
+      "type": "object", "required": ["mean", "std"],
+      "properties": {"mean": {"$ref": "#/$defs/nnum"}, "std": {"$ref": "#/$defs/nnum"}}
+    },
+    "matrix3": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}
+    },
+    "bandTriple": {
+      "type": "object", "required": ["LOW", "MEDIUM", "HIGH"], "additionalProperties": false,
+      "properties": {"LOW": {"type": "number"}, "MEDIUM": {"type": "number"}, "HIGH": {"type": "number"}}
+    },
+    "spread": {
+      "type": "object", "required": ["mean", "low", "high"],
+      "properties": {"mean": {"$ref": "#/$defs/nnum"}, "low": {"$ref": "#/$defs/nnum"}, "high": {"$ref": "#/$defs/nnum"}}
+    },
+    "classificationMetrics": {
+      "type": "object",
+      "required": ["model", "accuracy", "macroPrecision", "macroRecall", "macroF1", "recall", "confusionMatrix"],
+      "properties": {
+        "model": {"type": "string"},
+        "accuracy": {"type": "number"}, "macroPrecision": {"type": "number"},
+        "macroRecall": {"type": "number"}, "macroF1": {"type": "number"},
+        "recall": {"$ref": "#/$defs/bandTriple"},
+        "confusionMatrix": {"$ref": "#/$defs/matrix3"}
+      }
+    },
+    "correlationResult": {
+      "type": "object", "required": ["r", "p", "ci", "pAdj", "significant"],
+      "properties": {
+        "r": {"$ref": "#/$defs/nnum"}, "p": {"$ref": "#/$defs/nnum"}, "pAdj": {"$ref": "#/$defs/nnum"},
+        "ci": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/nnum"}},
+        "significant": {"type": "boolean"}
+      }
+    },
+    "heatmap": {
+      "type": "object", "required": ["r", "pAdj", "significant"],
+      "properties": {
+        "r": {"type": "array", "items": {"type": "array", "items": {"$ref": "#/$defs/nnum"}}},
+        "pAdj": {"type": "array", "items": {"type": "array", "items": {"$ref": "#/$defs/nnum"}}},
+        "significant": {"type": "array", "items": {"type": "array", "items": {"type": "boolean"}}}
+      }
+    },
+    "correlationLevel": {
+      "type": "object",
+      "required": ["level", "note", "variables", "alpha", "correction", "nTests", "pairs", "matrices"],
+      "properties": {
+        "level": {"enum": ["developer", "developer-week"]},
+        "note": {"type": "string"},
+        "variables": {"type": "array", "items": {"type": "string"}},
+        "alpha": {"type": "number"},
+        "correction": {"const": "benjamini-hochberg"},
+        "nTests": {"type": "integer"},
+        "pairs": {
+          "type": "array",
+          "items": {
+            "type": "object", "required": ["x", "y", "n", "pearson", "spearman"],
+            "properties": {
+              "x": {"type": "string"}, "y": {"type": "string"}, "n": {"type": "integer"},
+              "pearson": {"$ref": "#/$defs/correlationResult"},
+              "spearman": {"$ref": "#/$defs/correlationResult"}
+            }
+          }
+        },
+        "matrices": {
+          "type": "object", "required": ["pearson", "spearman"],
+          "properties": {"pearson": {"$ref": "#/$defs/heatmap"}, "spearman": {"$ref": "#/$defs/heatmap"}}
+        }
+      }
+    }
+  },
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["schemaVersion", "generatedAt", "dataSource", "disclaimer", "seed", "nDevelopers", "nWeeks",
+                   "studyStart", "quick"],
+      "properties": {
+        "schemaVersion": {"type": "string"},
+        "generatedAt": {"type": "string"},
+        "dataSource": {"enum": ["simulated", "component2"]},
+        "disclaimer": {"type": "string", "minLength": 1},
+        "seed": {"type": "integer"},
+        "nDevelopers": {"type": "integer", "minimum": 1},
+        "nWeeks": {"type": "integer", "minimum": 1},
+        "studyStart": {"type": "string"},
+        "quick": {"type": "boolean"},
+        "sample": {
+          "type": "object", "required": ["nDevelopersIncluded", "note"],
+          "properties": {"nDevelopersIncluded": {"type": "integer"}, "note": {"type": "string"}}
+        }
+      }
+    },
+    "overview": {
+      "type": "object",
+      "required": ["nWeeks", "totalEvents", "totalSessions", "activeDevelopers", "fixRate", "ignoreRate",
+                   "falsePositiveRate", "avgResponseTimeSec", "introRatePerSession", "riskBandCounts",
+                   "priorityCounts", "trendDirections"],
+      "properties": {
+        "totalEvents": {"type": "integer"}, "totalSessions": {"type": "integer"},
+        "activeDevelopers": {"type": "integer"},
+        "fixRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "ignoreRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "falsePositiveRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "avgResponseTimeSec": {"type": "number"}, "introRatePerSession": {"type": "number"},
+        "riskBandCounts": {"$ref": "#/$defs/bandTriple"},
+        "priorityCounts": {"type": "object", "required": ["1", "2", "3"]},
+        "trendDirections": {"type": "object"}
+      }
+    },
+    "trends": {
+      "type": "object", "required": ["team", "developers"],
+      "properties": {
+        "team": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["week", "vulnCount", "activeDevelopers", "sessions", "fixRate", "ignoreRate",
+                         "falsePositiveRate", "avgResponseTime", "severityWeightedLoad", "introRatePerSession",
+                         "vulnCountMa4", "vulnCountWow", "byType"],
+            "properties": {
+              "week": {"type": "integer"}, "vulnCount": {"type": "integer"},
+              "fixRate": {"$ref": "#/$defs/nnum"}, "introRatePerSession": {"$ref": "#/$defs/nnum"},
+              "vulnCountMa4": {"$ref": "#/$defs/nnum"}, "vulnCountWow": {"$ref": "#/$defs/nnum"},
+              "byType": {"type": "object", "additionalProperties": {"type": "integer"}}
+            }
+          }
+        },
+        "developers": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["developerId", "introRateSlope", "fixRateSlope", "direction", "weeks"],
+            "properties": {
+              "developerId": {"type": "string"},
+              "direction": {"enum": ["improving", "stable", "worsening"]},
+              "weeks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["week", "active", "vulnCount", "fixRate", "introRatePerSession", "vulnCountMa4",
+                               "vulnCountSlope4"],
+                  "properties": {
+                    "week": {"type": "integer"}, "active": {"type": "boolean"}, "vulnCount": {"type": "integer"},
+                    "fixRate": {"$ref": "#/$defs/nnum"}, "introRatePerSession": {"$ref": "#/$defs/nnum"},
+                    "vulnCountMa4": {"$ref": "#/$defs/nnum"}, "vulnCountSlope4": {"$ref": "#/$defs/nnum"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "forecast": {
+      "type": "object", "required": ["deployed", "window", "horizon", "bandNote", "developers"],
+      "properties": {
+        "deployed": {"type": "string"},
+        "window": {"type": "integer"}, "horizon": {"type": "integer"},
+        "bandNote": {"const": "seed spread, not a calibrated confidence interval"},
+        "developers": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["developerId", "history", "test", "future"],
+            "properties": {
+              "developerId": {"type": "string"},
+              "history": {
+                "type": "array",
+                "items": {
+                  "type": "object", "required": ["week", "vulnCount", "fixRate", "active"],
+                  "properties": {"week": {"type": "integer"}, "vulnCount": {"type": "integer"},
+                                 "fixRate": {"$ref": "#/$defs/nnum"}, "active": {"type": "boolean"}}
+                }
+              },
+              "test": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["originWeek", "week", "horizon", "target", "actual", "band", "naive", "mean4", "linear"],
+                  "properties": {
+                    "originWeek": {"type": "integer"}, "week": {"type": "integer"}, "horizon": {"type": "integer"},
+                    "target": {"enum": ["vulnCount", "fixRate"]},
+                    "actual": {"$ref": "#/$defs/nnum"},
+                    "band": {"type": "object", "required": ["low", "high"]},
+                    "naive": {"$ref": "#/$defs/nnum"}, "mean4": {"$ref": "#/$defs/nnum"}, "linear": {"$ref": "#/$defs/nnum"}
+                  },
+                  "additionalProperties": {"anyOf": [{"$ref": "#/$defs/nnum"}, {"type": "object"}]}
+                }
+              },
+              "future": {
+                "type": "array",
+                "items": {
+                  "type": "object", "required": ["week", "horizon", "vulnCount", "fixRate"],
+                  "properties": {"week": {"type": "integer"}, "horizon": {"type": "integer"},
+                                 "vulnCount": {"$ref": "#/$defs/spread"}, "fixRate": {"$ref": "#/$defs/spread"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "forecastEvaluation": {
+      "type": "object",
+      "required": ["split", "seeds", "nTestWindows", "nTestTargets", "selectionScore", "residualNote", "selected",
+                   "deployed", "deploymentSteps", "metrics", "wilcoxon", "archetypeMaeNote", "archetypeMae"],
+      "properties": {
+        "residualNote": {"type": "string", "pattern": "post-hoc"},
+        "metrics": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["model", "target", "horizon", "mae", "rmse", "smape"],
+            "properties": {
+              "model": {"type": "string"}, "target": {"enum": ["vulnCount", "fixRate"]},
+              "horizon": {"anyOf": [{"const": "all"}, {"type": "integer"}]},
+              "mae": {"$ref": "#/$defs/meanStd"}, "rmse": {"$ref": "#/$defs/meanStd"}, "smape": {"$ref": "#/$defs/meanStd"}
+            }
+          }
+        },
+        "wilcoxon": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["model", "baseline", "target", "nDevelopers", "medianDiff", "pValue"],
+            "properties": {"model": {"type": "string"}, "baseline": {"enum": ["naive", "mean4", "linear"]},
+                           "pValue": {"type": "number", "minimum": 0, "maximum": 1}}
+          }
+        },
+        "archetypeMaeNote": {"const": "diagnostic, simulated data only"},
+        "archetypeMae": {"type": "array"}
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["framing", "thresholds", "scoredAtWeek", "predictsWeeks", "driversNote", "scoreHistoryNote", "developers"],
+      "properties": {
+        "framing": {"type": "string", "pattern": "not a judgment of the person"},
+        "thresholds": {"type": "object", "required": ["medium", "high"]},
+        "developers": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["developerId", "band", "probabilities", "drivers", "scoreHistory"],
+            "properties": {
+              "developerId": {"type": "string"},
+              "band": {"$ref": "#/$defs/band"},
+              "probabilities": {"$ref": "#/$defs/bandTriple"},
+              "drivers": {
+                "type": "array", "maxItems": 5,
+                "items": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["metric", "value", "studyMedian", "direction", "text"],
+                  "properties": {
+                    "metric": {"type": "string"}, "value": {"type": "number"}, "studyMedian": {"type": "number"},
+                    "direction": {"enum": ["worse", "better", "same"]}, "text": {"type": "string"}
+                  }
+                }
+              },
+              "scoreHistory": {
+                "type": "array",
+                "items": {
+                  "type": "object", "required": ["week", "score", "band"],
+                  "properties": {"week": {"type": "integer"}, "score": {"$ref": "#/$defs/nnum"},
+                                 "band": {"anyOf": [{"$ref": "#/$defs/band"}, {"type": "null"}]}}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "riskEvaluation": {
+      "type": "object",
+      "required": ["headlineMethod", "postHocNote", "classBalance", "selected", "headline", "significance", "round1",
+                   "featureImportance", "featureImportanceNote"],
+      "properties": {
+        "headline": {
+          "type": "array", "minItems": 5,
+          "items": {
+            "type": "object", "required": ["model", "macroF1", "accuracy", "recallHigh", "confusionMatrixSum"],
+            "properties": {
+              "model": {"enum": ["xgboost", "logreg", "persistence", "fix_rate_rule", "majority"]},
+              "macroF1": {"type": "object", "required": ["mean", "std", "ciLow", "ciHigh"]},
+              "accuracy": {"$ref": "#/$defs/meanStd"}, "recallHigh": {"$ref": "#/$defs/meanStd"},
+              "confusionMatrixSum": {"$ref": "#/$defs/matrix3"}
+            }
+          }
+        },
+        "significance": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["baseline", "bootstrapMacroF1Diff", "mcnemarRepeat1"],
+            "properties": {
+              "bootstrapMacroF1Diff": {"type": "object", "required": ["meanDiff", "ciLow", "ciHigh", "xgbBetterShare"]},
+              "mcnemarRepeat1": {"type": "object", "required": ["pValue", "note"]}
+            }
+          }
+        },
+        "round1": {
+          "type": "object", "required": ["note", "originalFeatures", "extendedFeatures"],
+          "properties": {
+            "note": {"type": "string", "pattern": "already been seen"},
+            "originalFeatures": {"type": "array", "items": {"$ref": "#/$defs/classificationMetrics"}},
+            "extendedFeatures": {"type": "array", "items": {"$ref": "#/$defs/classificationMetrics"}}
+          }
+        },
+        "featureImportance": {
+          "type": "array",
+          "items": {"type": "object", "required": ["feature", "gain", "meanAbsShap"]}
+        },
+        "featureImportanceNote": {"type": "string", "minLength": 1}
+      }
+    },
+    "correlations": {
+      "type": "object", "required": ["variableLabels", "developer", "week"],
+      "properties": {
+        "variableLabels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "developer": {"$ref": "#/$defs/correlationLevel"},
+        "week": {"$ref": "#/$defs/correlationLevel"}
+      }
+    },
+    "recommendations": {
+      "type": "object", "required": ["framing", "rules", "developers"],
+      "properties": {
+        "framing": {"type": "string", "pattern": "not a judgment of the person"},
+        "rules": {"type": "array"},
+        "developers": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "required": ["developerId", "priority", "recommendations", "firedRules", "inputs"],
+            "properties": {
+              "developerId": {"type": "string"},
+              "priority": {"enum": [1, 2, 3]},
+              "recommendations": {
+                "type": "array", "minItems": 1, "maxItems": 3,
+                "items": {
+                  "type": "object", "required": ["ruleId", "priority", "text"],
+                  "properties": {"ruleId": {"type": "string"}, "priority": {"enum": [1, 2, 3]},
+                                 "text": {"type": "string", "minLength": 1}}
+                }
+              },
+              "firedRules": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+              "inputs": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "keyFindings": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["topic", "text"], "additionalProperties": false,
+        "properties": {"topic": {"enum": ["data", "forecast", "risk", "summary", "correlation"]},
+                       "text": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

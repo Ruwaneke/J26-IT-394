@@ -194,6 +194,13 @@ recommend:
     text: "No specific rule applies this period. Keep reviewing findings as they appear."
   output: outputs/recommendations.json
 
+export:
+  output: outputs/analytics.json
+  schema: analytics.schema.json
+  sample_output: ../frontend/public/sample-analytics.json
+  sample_developers: 20
+  sample_max_kb: 300
+
 simulation:
   n_developers: 60
   archetype_mix: {improving: 0.30, stagnant: 0.30, worsening: 0.20, erratic: 0.20}
