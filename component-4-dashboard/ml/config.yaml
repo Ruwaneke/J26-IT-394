@@ -110,6 +110,19 @@ risk:
     metrics: outputs/risk_metrics.json
     tuning: outputs/risk_tuning.csv
 
+correlation:
+  variables: [fix_rate, ignore_rate, repeat_rate, avg_response_time, severity_weighted_load, vuln_count, false_positive_rate]
+  labels:
+    fix_rate: Fix rate
+    ignore_rate: Ignore rate
+    repeat_rate: Repeat rate
+    avg_response_time: Avg response time
+    severity_weighted_load: Severity-weighted load
+    vuln_count: Findings per week
+    false_positive_rate: False-positive rate
+  alpha: 0.05
+  output: outputs/correlations.json
+
 simulation:
   n_developers: 60
   archetype_mix: {improving: 0.30, stagnant: 0.30, worsening: 0.20, erratic: 0.20}
