@@ -97,8 +97,14 @@ risk:
     min_child_weight: [1, 5]
   logreg_C: [0.1, 1.0, 10.0]
   bootstrap_reps: 2000
+  cv_repeats: 5                       # headline: repeated GroupKFold over all 60 developers
+  round1:                             # frozen selection from round 1 (original features), kept for reproducibility
+    xgboost: {max_depth: 4, n_estimators: 100, learning_rate: 0.1, min_child_weight: 1}
+    logreg_C: 0.1
+  max_drivers: 3                      # measured-metric reasons shown per developer
   quick:
     bootstrap_reps: 200
+    cv_repeats: 2
   outputs:
     risk: outputs/risk.json
     metrics: outputs/risk_metrics.json

@@ -4,8 +4,14 @@ import pytest
 from sklearn.model_selection import GroupKFold
 
 from src.features import build_developer_weeks
-from src.risk import (Normaliser, build_rows, describe, developer_arrays, feature_columns, features_at,
-                      fix_rate_rule, holdout_split, risk_score, score_components, to_band)
+from sklearn.metrics import f1_score
+
+from src.risk import (PAST_SCORE_FEATURES, Normaliser, build_rows, design, developer_arrays, feature_columns,
+                      feature_sets, features_at, fix_rate_rule, holdout_split, macro_f1, measured_drivers,
+                      risk_score, score_components, to_band)
+
+WEIGHTS = {"severity_weighted_ignore_rate": 0.4, "one_minus_fix_rate": 0.3,
+           "normalised_repeat_rate": 0.2, "normalised_log_response_time": 0.1}
 from src.simulate import simulate
 
 
@@ -67,12 +73,47 @@ def test_no_developer_in_both_train_and_test(sim_dw):
     assert sorted(seen_in_val) == sorted(train)
 
 
-def test_no_archetype_or_future_columns_in_features(sim_dw):
+def test_past_score_inputs_use_only_weeks_up_to_t(sim_dw):
+    cfg, dw, _ = sim_dw
+    a = developer_arrays(dw, cfg)["DEV003"]
+    t = 9
+    cols = [c for c in build_rows({"D": a}, [t], cfg).columns if c.startswith(("persist_", "history_"))]
+    before = build_rows({"D": a}, [t], cfg)[cols].iloc[0]
+    tampered = {k: np.concatenate([v[:t], v[t:] * 0 + 50.0]) for k, v in a.items()}
+    assert np.allclose(build_rows({"D": tampered}, [t], cfg)[cols].iloc[0], before, equal_nan=True)
+
+
+def test_feature_sets(sim_dw):
     cfg, dw, _ = sim_dw
     rows = build_rows(developer_arrays(dw, cfg), [6], cfg)
-    cols = feature_columns(rows)
-    assert not [c for c in cols if "archetype" in c or c.startswith(("label_", "persist_", "history_"))]
-    assert len(cols) == 8 * 3 + len(cfg["vulnerability_types"]) + 2
+    sets = feature_sets(rows)
+    n_types = len(cfg["vulnerability_types"])
+    assert len(sets["original"]) == 8 * 3 + n_types + 2
+    assert len(sets["extended"]) == 9 * 3 + n_types + 2 + 2
+    assert set(sets["original"]) < set(sets["extended"])
+    for cols in sets.values():
+        assert not [c for c in cols if "archetype" in c or c.startswith(("label_", "persist_", "history_"))]
+
+
+def test_past_score_features_use_the_given_normaliser(sim_dw):
+    cfg, dw, _ = sim_dw
+    rows = build_rows(developer_arrays(dw, cfg), [8], cfg).dropna(subset=["persist_fix_rate"])
+    cols = feature_columns(rows) + PAST_SCORE_FEATURES
+    wide = Normaliser([{"repeat_rate": 0.0, "log_response_time": 0.0}, {"repeat_rate": 1.0, "log_response_time": 10.0}])
+    narrow = Normaliser([{"repeat_rate": 0.4, "log_response_time": 5.0}, {"repeat_rate": 0.5, "log_response_time": 5.5}])
+    a, b = design(rows, cols, wide, WEIGHTS), design(rows, cols, narrow, WEIGHTS)
+    assert not np.allclose(a["past_score_last4"], b["past_score_last4"])
+    first = rows.iloc[0]
+    comp = {k: first[f"persist_{k}"] for k in ("severity_weighted_ignore_rate", "fix_rate", "repeat_rate", "log_response_time")}
+    assert a["past_score_last4"].iloc[0] == pytest.approx(risk_score(comp, wide, WEIGHTS))
+
+
+def test_macro_f1_matches_sklearn():
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        y, p = rng.integers(0, 3, 40), rng.integers(0, 3, 40)
+        assert macro_f1(y, p) == pytest.approx(f1_score(y, p, labels=[0, 1, 2], average="macro", zero_division=0))
+    assert macro_f1(np.array([0, 0]), np.array([0, 0])) == pytest.approx(1 / 3)   # absent classes score 0
 
 
 def test_risk_score_and_bands():
@@ -106,8 +147,23 @@ def test_fix_rate_rule():
     assert [fix_rate_rule(f, rule) for f in (0.2, 0.5, 0.74, 0.75, np.nan)] == [2, 1, 1, 0, 0]
 
 
-def test_plain_words():
-    med = pd.Series({"ignore_rate_slope4": 0.0, "fix_rate_last4": 0.5, "share_xss": 0.3})
-    assert describe("ignore_rate_slope4", 0.05, med) == "ignore rate rising"
-    assert describe("fix_rate_last4", 0.2, med) == "low fix rate (last 4 weeks)"
-    assert describe("share_xss", 0.6, med) == "high share of xss findings"
+def _arrays(fixed, ignored, sw_ignored, repeats, response_total, vuln=10.0, weeks=4):
+    rep = lambda x: np.full(weeks, float(x))
+    return {"vuln_count": rep(vuln), "n_fixed": rep(fixed), "n_ignored": rep(ignored), "n_false_positive": rep(0),
+            "repeat_count": rep(repeats), "severity_weighted_load": rep(20), "ignored_severity_load": rep(sw_ignored),
+            "n_high_severity": rep(3), "response_total": rep(response_total), "active": rep(1)}
+
+
+def test_drivers_come_from_measured_metrics():
+    reference = {"severity_weighted_ignore_rate": (0.2, 0.1), "fix_rate": (0.6, 0.2), "repeat_rate": (0.4, 0.2),
+                 "response_time_sec": (400.0, 200.0), "vuln_count": (10.0, 4.0)}
+    risky = _arrays(fixed=2, ignored=6, sw_ignored=12, repeats=4, response_total=4000)  # fix 20%, sw-ignore 60%
+    drivers = measured_drivers(risky, 4, reference, "HIGH", 3)
+    assert [d["metric"] for d in drivers] == ["severity_weighted_ignore_rate", "fix_rate"]
+    assert drivers[0]["value"] == pytest.approx(0.6) and drivers[0]["direction"] == "worse"
+    assert drivers[0]["text"] == "Severity-weighted ignore rate 60% in weeks 1-4 (above the study median of 20%)"
+
+    careful = _arrays(fixed=9, ignored=0, sw_ignored=0, repeats=1, response_total=2000)
+    low = measured_drivers(careful, 4, reference, "LOW", 3)
+    assert {d["metric"] for d in low} == {"severity_weighted_ignore_rate", "fix_rate", "repeat_rate"}
+    assert all(d["direction"] == "better" for d in low)
