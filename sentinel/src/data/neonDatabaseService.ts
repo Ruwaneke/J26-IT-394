@@ -152,7 +152,19 @@ export class NeonDatabaseService {
 
   // ── Database Initialization & DDL Migration ──────────────────────────────────
 
+  private initPromise: Promise<boolean> | null = null;
+
   public async initialize(): Promise<boolean> {
+    if (this.isInitialized && this.isOnline) {
+      return true;
+    }
+    if (!this.initPromise) {
+      this.initPromise = this.doInitialize().finally(() => { this.initPromise = null; });
+    }
+    return this.initPromise;
+  }
+
+  private async doInitialize(): Promise<boolean> {
     if (this.isInitialized && this.isOnline) {
       return true;
     }
@@ -235,6 +247,15 @@ export class NeonDatabaseService {
 
         CREATE INDEX IF NOT EXISTS idx_act_dev ON user_activity_logs(developer_id);
         CREATE INDEX IF NOT EXISTS idx_act_time ON user_activity_logs(created_at DESC);
+
+        -- Generic JSON documents (projects, shifts, sessions, learning profiles)
+        CREATE TABLE IF NOT EXISTS sentinel_documents (
+          collection VARCHAR(64) NOT NULL,
+          doc_key VARCHAR(200) NOT NULL,
+          data JSONB NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          PRIMARY KEY (collection, doc_key)
+        );
       `);
 
       // 3. Seed initial users if table is empty
@@ -270,15 +291,7 @@ export class NeonDatabaseService {
       const count = parseInt(res.rows[0].count, 10);
       if (count > 0) { return; }
 
-      // Read users.json if exists
-      const usersFilePath = path.join(this.dataDir, 'users.json');
       let usersToSeed: any[] = [];
-      if (fs.existsSync(usersFilePath)) {
-        try {
-          const raw = fs.readFileSync(usersFilePath, 'utf8');
-          usersToSeed = JSON.parse(raw);
-        } catch { /* skip */ }
-      }
 
       if (usersToSeed.length === 0) {
         usersToSeed = [
@@ -342,65 +355,9 @@ export class NeonDatabaseService {
     }
   }
 
+  /** JSON import removed — the database is the sole source of truth. */
   private async syncLocalRecordsIfEmpty(): Promise<void> {
-    if (!this.pool) { return; }
-    try {
-      const res = await this.pool.query('SELECT COUNT(*) as count FROM vulnerability_records;');
-      const count = parseInt(res.rows[0].count, 10);
-      if (count > 0) { return; }
-
-      // Check DEV001_vulnerability_records.json
-      const files = fs.readdirSync(this.dataDir).filter(f => f.endsWith('_vulnerability_records.json'));
-      let importedCount = 0;
-
-      for (const file of files) {
-        try {
-          const raw = fs.readFileSync(path.join(this.dataDir, file), 'utf8');
-          const recs = JSON.parse(raw);
-          if (Array.isArray(recs)) {
-            for (const r of recs.slice(0, 30)) { // import sample records
-              await this.pool.query(
-                `INSERT INTO vulnerability_records (
-                  record_id, finding_id, developer_id, github_username, session_id, shift_id,
-                  vulnerability_type, severity, confidence, file_name, line_number, column_number,
-                  code_snippet, why_vulnerable, how_to_fix, fixed_code, attack_scenario,
-                  status, detected_by_rule, detected_at, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW())
-                ON CONFLICT (record_id) DO NOTHING;`,
-                [
-                  r.recordId,
-                  r.findingId || r.recordId,
-                  r.developerId || 'DEV001',
-                  r.githubUsername || null,
-                  r.sessionId || 'SESSION-INIT',
-                  null,
-                  r.vulnerabilityType,
-                  r.severity,
-                  r.confidence || 0.9,
-                  r.fileName,
-                  r.lineNumber || 1,
-                  r.columnNumber || 0,
-                  r.codeSnippet || '',
-                  `Detected vulnerable pattern: ${r.vulnerabilityType} violates secure coding rules.`,
-                  `Refactor the code to remove insecure operations and follow OWASP standards.`,
-                  `// Secure alternative implementation`,
-                  `Exploitation could compromise system integrity or disclose confidential data.`,
-                  'OPEN',
-                  r.detectedByRule || 'SENTINEL-RULE',
-                  r.detectedAt || new Date().toISOString(),
-                ]
-              );
-              importedCount++;
-            }
-          }
-        } catch { /* skip */ }
-      }
-      if (importedCount > 0) {
-        console.log(`[NeonDb] Imported ${importedCount} historic vulnerability records to PostgreSQL.`);
-      }
-    } catch (err: any) {
-      console.error('[NeonDb] Failed to sync local records:', err.message);
-    }
+    return;
   }
 
   // ─── User Management API ────────────────────────────────────────────────────
@@ -569,6 +526,78 @@ export class NeonDatabaseService {
           [usernameOrId]
         );
       } catch { /* ignore */ }
+    }
+  }
+
+  /** Per-developer severity counts + score, computed from the DB. */
+  public async getDeveloperStatsSummary(): Promise<Array<{
+    developerId: string; total: number; critical: number; high: number;
+    medium: number; low: number; score: number;
+  }>> {
+    const map = new Map<string, { developerId: string; total: number; critical: number; high: number; medium: number; low: number; score: number }>();
+    const rows: Array<{ developer_id: string; severity: string; cnt: number }> = [];
+    if (this.pool && this.isOnline) {
+      try {
+        const res = await this.pool.query(
+          `SELECT developer_id, severity, COUNT(*)::int AS cnt
+           FROM vulnerability_records GROUP BY developer_id, severity;`
+        );
+        rows.push(...res.rows);
+      } catch (err: any) {
+        console.error('[NeonDb] getDeveloperStatsSummary error:', err.message);
+      }
+    } else {
+      for (const r of this.memRecords) {
+        rows.push({ developer_id: r.developerId, severity: r.severity, cnt: 1 });
+      }
+    }
+    for (const r of rows) {
+      const s = map.get(r.developer_id) ??
+        { developerId: r.developer_id, total: 0, critical: 0, high: 0, medium: 0, low: 0, score: 100 };
+      s.total += r.cnt;
+      if (r.severity === 'CRITICAL') { s.critical += r.cnt; }
+      else if (r.severity === 'HIGH') { s.high += r.cnt; }
+      else if (r.severity === 'MEDIUM') { s.medium += r.cnt; }
+      else { s.low += r.cnt; }
+      map.set(r.developer_id, s);
+    }
+    for (const s of map.values()) {
+      s.score = Math.max(0, 100 - s.critical * 25 - s.high * 10 - s.medium * 5 - s.low * 2);
+    }
+    return [...map.values()];
+  }
+
+  // ─── Generic Document Store (JSONB) ─────────────────────────────────────────
+
+  public async saveDocument(collection: string, key: string, data: unknown): Promise<void> {
+    if (!this.pool) { return; }
+    try {
+      await this.initialize();
+      if (!this.isOnline) { return; }
+      await this.pool.query(
+        `INSERT INTO sentinel_documents (collection, doc_key, data, updated_at)
+         VALUES ($1, $2, $3::jsonb, NOW())
+         ON CONFLICT (collection, doc_key) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW();`,
+        [collection, key, JSON.stringify(data)]
+      );
+    } catch (err: any) {
+      console.error(`[NeonDb] saveDocument ${collection}/${key} error:`, err.message);
+    }
+  }
+
+  public async loadCollection<T = any>(collection: string): Promise<Array<{ key: string; data: T }>> {
+    if (!this.pool) { return []; }
+    try {
+      await this.initialize();
+      if (!this.isOnline) { return []; }
+      const res = await this.pool.query(
+        'SELECT doc_key, data FROM sentinel_documents WHERE collection = $1;',
+        [collection]
+      );
+      return res.rows.map(r => ({ key: r.doc_key as string, data: r.data as T }));
+    } catch (err: any) {
+      console.error(`[NeonDb] loadCollection ${collection} error:`, err.message);
+      return [];
     }
   }
 
@@ -984,101 +1013,43 @@ export class NeonDatabaseService {
     }
   }
 
-  // ─── Local Fallback Helpers ─────────────────────────────────────────────────
+  // ─── In-memory Offline Fallback (no JSON files are read or written) ─────────
+
+  private memUsers: DbUser[] = [];
+  private memRecords: DbVulnerabilityRecord[] = [];
 
   private getLocalUsers(): DbUser[] {
-    try {
-      const p = path.join(this.dataDir, 'users.json');
-      if (fs.existsSync(p)) {
-        const list = JSON.parse(fs.readFileSync(p, 'utf8'));
-        return list.map((u: any) => ({
-          id: u.id,
-          username: u.username,
-          githubUsername: u.githubUsername || null,
-          passwordHash: u.passwordHash || '',
-          role: u.role || 'developer',
-          displayName: u.displayName || u.username,
-          email: u.email || '',
-          githubAvatarUrl: u.githubAvatarUrl || null,
-          createdAt: u.createdAt || new Date().toISOString(),
-          lastLoginAt: u.lastLoginAt || new Date().toISOString(),
-        }));
-      }
-    } catch { /* skip */ }
-    return [];
+    return [...this.memUsers];
   }
 
   private saveLocalUser(user: DbUser): void {
-    try {
-      const p = path.join(this.dataDir, 'users.json');
-      const list = this.getLocalUsers();
-      const idx = list.findIndex(u => u.username === user.username);
-      if (idx >= 0) { list[idx] = user; }
-      else { list.push(user); }
-      fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
-    } catch { /* skip */ }
+    const idx = this.memUsers.findIndex(u => u.username === user.username);
+    if (idx >= 0) { this.memUsers[idx] = user; }
+    else { this.memUsers.push(user); }
   }
 
   private removeLocalUser(userId: string): void {
-    try {
-      const p = path.join(this.dataDir, 'users.json');
-      const list = this.getLocalUsers().filter(u => u.id !== userId);
-      fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
-    } catch { /* skip */ }
+    this.memUsers = this.memUsers.filter(u => u.id !== userId);
   }
 
-  private appendLocalRecord(developerId: string, record: DbVulnerabilityRecord): void {
-    try {
-      const p = path.join(this.dataDir, `${developerId}_vulnerability_records.json`);
-      let existing: any[] = [];
-      if (fs.existsSync(p)) {
-        existing = JSON.parse(fs.readFileSync(p, 'utf8'));
-      }
-      existing.push(record);
-      fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
-    } catch { /* skip */ }
+  private appendLocalRecord(_developerId: string, record: DbVulnerabilityRecord): void {
+    this.memRecords.push(record);
   }
 
   private updateLocalRecordStatus(developerId: string, findingId: string, status: VulnerabilityStatus): void {
-    try {
-      const p = path.join(this.dataDir, `${developerId}_vulnerability_records.json`);
-      if (fs.existsSync(p)) {
-        const existing: any[] = JSON.parse(fs.readFileSync(p, 'utf8'));
-        let modified = false;
-        for (const r of existing) {
-          if (r.findingId === findingId || r.recordId === findingId) {
-            r.status = status;
-            if (status === 'FIXED') { r.fixedAt = new Date().toISOString(); }
-            modified = true;
-          }
-        }
-        if (modified) {
-          fs.writeFileSync(p, JSON.stringify(existing, null, 2), 'utf8');
-        }
+    for (const r of this.memRecords) {
+      if (r.developerId === developerId && (r.findingId === findingId || r.recordId === findingId)) {
+        r.status = status;
+        if (status === 'FIXED') { (r as any).fixedAt = new Date().toISOString(); }
       }
-    } catch { /* skip */ }
+    }
   }
 
   private getLocalRecords(developerId?: string, statusFilter?: string, limit = 100): DbVulnerabilityRecord[] {
-    const records: DbVulnerabilityRecord[] = [];
-    try {
-      const files = fs.readdirSync(this.dataDir).filter(f => f.endsWith('_vulnerability_records.json'));
-      for (const file of files) {
-        const devId = file.replace('_vulnerability_records.json', '');
-        if (developerId && devId !== developerId) { continue; }
-        const raw = fs.readFileSync(path.join(this.dataDir, file), 'utf8');
-        const list = JSON.parse(raw);
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            const mapped = this.mapDbRecord(item);
-            if (!statusFilter || statusFilter === 'ALL' || mapped.status === statusFilter) {
-              records.push(mapped);
-            }
-          }
-        }
-      }
-    } catch { /* skip */ }
-    return records.slice(0, limit);
+    return this.memRecords
+      .filter(r => (!developerId || r.developerId === developerId)
+        && (!statusFilter || statusFilter === 'ALL' || r.status === statusFilter))
+      .slice(0, limit);
   }
 
   private calculateLocalStats(developerId?: string): VulnerabilityStats {

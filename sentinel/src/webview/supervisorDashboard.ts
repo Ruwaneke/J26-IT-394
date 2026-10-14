@@ -47,28 +47,15 @@ export interface DevStats {
   low: number;
   score: number;
 }
-export function loadAllDeveloperStats(dataDir: string): DevStats[] {
-  const result: DevStats[] = [];
-  try {
-    const files = fs.readdirSync(dataDir).filter(f => f.endsWith('_vulnerability_records.json'));
-    for (const file of files) {
-      try {
-        const raw  = fs.readFileSync(path.join(dataDir, file), 'utf8');
-        const recs = JSON.parse(raw) as DevRecord[];
-        const id   = file.replace('_vulnerability_records.json', '');
-        const s: DevStats = { developerId: id, total: recs.length, critical: 0, high: 0, medium: 0, low: 0, score: 100 };
-        for (const r of recs) {
-          if (r.severity === 'CRITICAL') s.critical++;
-          else if (r.severity === 'HIGH') s.high++;
-          else if (r.severity === 'MEDIUM') s.medium++;
-          else s.low++;
-        }
-        s.score = Math.max(0, 100 - s.critical * 25 - s.high * 10 - s.medium * 5 - s.low * 2);
-        result.push(s);
-      } catch { /* skip bad files */ }
-    }
-  } catch { /* dataDir not ready */ }
-  return result;
+let developerStatsCache: DevStats[] = [];
+
+/** Called by the extension (with data loaded from the DB) before rendering dashboards. */
+export function setDeveloperStats(stats: DevStats[]): void {
+  developerStatsCache = stats;
+}
+
+export function loadAllDeveloperStats(_dataDir?: string): DevStats[] {
+  return developerStatsCache;
 }
 
 // ─── Supervisor Dashboard HTML ─────────────────────────────────────────────────

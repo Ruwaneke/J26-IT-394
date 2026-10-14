@@ -15,10 +15,8 @@
  */
 
 import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { NeonDatabaseService } from '../data/neonDatabaseService.js';
+import { NeonDatabaseService, DbUser } from '../data/neonDatabaseService.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,7 +67,6 @@ export interface GitHubUserProfile {
 }
 
 const SESSION_KEY = 'sentinel.authSession';
-const USERS_FILE  = 'users.json';
 
 // GitHub OAuth scopes we need:
 //   read:user  → access profile (login, name, avatar)
@@ -79,12 +76,13 @@ const GITHUB_SCOPES = ['read:user', 'user:email'];
 // ─── AuthManager ──────────────────────────────────────────────────────────────
 
 export class AuthManager {
-  private users: User[] = [];
-  private readonly dataDir: string;
+  constructor(private readonly context: vscode.ExtensionContext) {}
 
-  constructor(private readonly context: vscode.ExtensionContext) {
-    this.dataDir = path.join(context.extensionPath, 'src', 'data');
-    this.loadUsers();
+  /** Returns the DB service after making sure the connection is initialised. */
+  private static async db(): Promise<NeonDatabaseService> {
+    const db = NeonDatabaseService.getInstance();
+    await db.initialize();
+    return db;
   }
 
   // ── GitHub OAuth Authentication ──────────────────────────────────────────────
@@ -123,7 +121,7 @@ export class AuthManager {
       }
 
       // Find or auto-provision a local user for this GitHub account
-      const user = this.findOrProvisionGitHubUser(profile);
+      const user = await this.findOrProvisionGitHubUser(profile);
 
       const session: AuthSession = {
         userId:            user.id,
@@ -181,7 +179,7 @@ export class AuthManager {
     const cleanGh = githubUsername.trim().replace(/^@/, '');
     if (!cleanGh) { return null; }
 
-    const db = NeonDatabaseService.getInstance();
+    const db = await AuthManager.db();
     // 1. Check Neon PostgreSQL
     try {
       const dbUser = await db.getUserByUsernameOrGitHub(cleanGh);
@@ -213,36 +211,13 @@ export class AuthManager {
       console.warn('[AuthManager] Could not lookup developer in DB, checking local store:', err);
     }
 
-    // 2. Fall back to local users or auto-provision
-    this.loadUsers();
-    let user = this.users.find(u =>
-      (u.githubUsername && u.githubUsername.toLowerCase() === cleanGh.toLowerCase()) ||
-      u.username.toLowerCase() === cleanGh.toLowerCase()
-    );
-
-    if (!user) {
-      user = {
-        id:              `user-dev-gh-${Date.now()}`,
-        username:        cleanGh,
-        passwordHash:    '',
-        role:            'developer',
-        displayName:     cleanGh,
-        email:           `${cleanGh}@github.com`,
-        createdAt:       new Date().toISOString(),
-        githubUsername:  cleanGh,
-        githubAvatarUrl: `https://avatars.githubusercontent.com/${cleanGh}`,
-      };
-      this.users.push(user);
-      this.saveUsers();
-    }
-
-    // Provision into Neon DB in the background
-    void db.upsertGitHubUser({
+    // 2. Not found in DB — provision as a new developer directly in the DB
+    const user = AuthManager.toUser(await db.upsertGitHubUser({
       login: cleanGh,
-      name: user.displayName,
-      avatar_url: user.githubAvatarUrl,
+      name: cleanGh,
+      avatar_url: `https://avatars.githubusercontent.com/${cleanGh}`,
       role: 'developer',
-    });
+    }));
 
     const session: AuthSession = {
       userId:          user.id,
@@ -276,14 +251,13 @@ export class AuthManager {
    * Authenticate with username + password (SHA-256).
    * Used for supervisor and administrator accounts.
    */
-  login(username: string, password: string): AuthSession | null {
-    this.loadUsers();
+  async login(username: string, password: string): Promise<AuthSession | null> {
     const hash = AuthManager.hashPassword(password);
-    const user = this.users.find(
-      u => u.username === username && u.passwordHash === hash
-    );
-
-    if (!user) { return null; }
+    const dbUser = await (await AuthManager.db()).getUserByUsernameOrGitHub(username);
+    if (!dbUser || dbUser.username !== username || !dbUser.passwordHash || dbUser.passwordHash !== hash) {
+      return null;
+    }
+    const user = AuthManager.toUser(dbUser);
 
     const session: AuthSession = {
       userId:      user.id,
@@ -313,30 +287,14 @@ export class AuthManager {
     return !!this.getSession();
   }
 
-  // ── User Store ──────────────────────────────────────────────────────────────
+  // ── User Store (Neon PostgreSQL only) ───────────────────────────────────────
 
-  private loadUsers(): void {
-    try {
-      const filePath = path.join(this.dataDir, USERS_FILE);
-      const raw = fs.readFileSync(filePath, 'utf8');
-      this.users = JSON.parse(raw) as User[];
-    } catch {
-      this.users = [];
-    }
-  }
-
-  private saveUsers(): void {
-    try {
-      const filePath = path.join(this.dataDir, USERS_FILE);
-      fs.writeFileSync(filePath, JSON.stringify(this.users, null, 2), 'utf8');
-    } catch {
-      // Ignore write errors in read-only environments
-    }
-  }
-
-  getAllUsers(): Omit<User, 'passwordHash'>[] {
-    this.loadUsers();
-    return this.users.map(({ passwordHash: _ph, ...u }) => u);
+  async getAllUsers(): Promise<Omit<User, 'passwordHash'>[]> {
+    const rows = await (await AuthManager.db()).getAllUsers();
+    return rows.map(r => {
+      const { passwordHash: _ph, ...u } = AuthManager.toUser(r);
+      return u;
+    });
   }
 
   // ── Crypto ──────────────────────────────────────────────────────────────────
@@ -347,50 +305,33 @@ export class AuthManager {
 
   // ── Admin: User Management ──────────────────────────────────────────────────
 
-  addUser(
+  async addUser(
     username: string,
     password: string,
     role: UserRole,
     displayName: string,
     email: string
-  ): { success: boolean; message: string } {
-    this.loadUsers();
-
-    if (this.users.find(u => u.username === username)) {
-      return { success: false, message: `Username "${username}" already exists.` };
-    }
-
-    const newUser: User = {
-      id: `user-${role.substring(0, 3)}-${Date.now()}`,
-      username,
-      passwordHash: AuthManager.hashPassword(password),
-      role,
-      displayName,
-      email,
-      createdAt: new Date().toISOString(),
-    };
-
-    this.users.push(newUser);
-    this.saveUsers();
-    return { success: true, message: `User "${username}" created successfully.` };
+  ): Promise<{ success: boolean; message: string }> {
+    const { success, message } = await (await AuthManager.db()).addUser(
+      username, AuthManager.hashPassword(password), role, displayName, email,
+    );
+    return { success, message };
   }
 
-  removeUser(userId: string): { success: boolean; message: string } {
-    this.loadUsers();
-    const idx = this.users.findIndex(u => u.id === userId);
-    if (idx === -1) {
+  async removeUser(userId: string): Promise<{ success: boolean; message: string }> {
+    const db = await AuthManager.db();
+    const users = await db.getAllUsers();
+    const target = users.find(u => u.id === userId);
+    if (!target) {
       return { success: false, message: 'User not found.' };
     }
-    const removed = this.users[idx];
     if (
-      removed.role === 'administrator' &&
-      this.users.filter(u => u.role === 'administrator').length <= 1
+      target.role === 'administrator' &&
+      users.filter(u => u.role === 'administrator').length <= 1
     ) {
       return { success: false, message: 'Cannot remove the last administrator.' };
     }
-    this.users.splice(idx, 1);
-    this.saveUsers();
-    return { success: true, message: `User "${removed.username}" removed.` };
+    return db.removeUser(userId);
   }
 
   // ── Private: GitHub Helpers ──────────────────────────────────────────────────
@@ -433,44 +374,29 @@ export class AuthManager {
    *   - New GitHub users → role: 'developer'
    *   - Existing password users linked by githubUsername → keep their role
    */
-  private findOrProvisionGitHubUser(profile: GitHubUserProfile): User {
-    this.loadUsers();
+  private async findOrProvisionGitHubUser(profile: GitHubUserProfile): Promise<User> {
+    const db = await AuthManager.db();
+    // Existing role is preserved by the DB upsert; new accounts become 'developer'.
+    const dbUser = await db.upsertGitHubUser({
+      login:      profile.login,
+      name:       profile.name ?? profile.login,
+      email:      profile.email ?? `${profile.login}@github.com`,
+      avatar_url: profile.avatar_url,
+    });
+    return AuthManager.toUser(dbUser);
+  }
 
-    // 1. Look for an existing user already linked to this GitHub account
-    let user = this.users.find(u => u.githubUsername === profile.login);
-
-    // 2. Look for a user whose username matches the GitHub login
-    if (!user) {
-      user = this.users.find(u => u.username === profile.login);
-    }
-
-    // 3. Auto-provision a new developer account
-    if (!user) {
-      user = {
-        id:              `user-dev-gh-${Date.now()}`,
-        username:        profile.login,
-        passwordHash:    '', // GitHub-only accounts have no password
-        role:            'developer',
-        displayName:     profile.name ?? profile.login,
-        email:           profile.email ?? `${profile.login}@github.com`,
-        createdAt:       new Date().toISOString(),
-        githubUsername:  profile.login,
-        githubAvatarUrl: profile.avatar_url,
-      };
-      this.users.push(user);
-      console.log(`[AuthManager] Auto-provisioned new developer: ${profile.login}`);
-    }
-
-    // 4. Update GitHub metadata on existing user if changed
-    if (user.githubUsername !== profile.login || user.githubAvatarUrl !== profile.avatar_url) {
-      user.githubUsername  = profile.login;
-      user.githubAvatarUrl = profile.avatar_url;
-      if (!user.displayName || user.displayName === user.username) {
-        user.displayName = profile.name ?? profile.login;
-      }
-    }
-
-    this.saveUsers();
-    return user;
+  private static toUser(u: DbUser): User {
+    return {
+      id:              u.id,
+      username:        u.username,
+      passwordHash:    u.passwordHash,
+      role:            u.role as UserRole,
+      displayName:     u.displayName,
+      email:           u.email,
+      createdAt:       u.createdAt,
+      githubUsername:  u.githubUsername ?? undefined,
+      githubAvatarUrl: u.githubAvatarUrl ?? undefined,
+    };
   }
 }

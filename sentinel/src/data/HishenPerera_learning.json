@@ -1,10 +1,10 @@
 {
   "developerId": "HishenPerera",
   "createdAt": "2026-10-05T17:47:31.038Z",
-  "updatedAt": "2026-10-13T18:08:01.319Z",
+  "updatedAt": "2026-10-14T00:39:08.242Z",
   "vulnLearning": {
     "HARDCODED_SECRET": {
-      "totalDetections": 100,
+      "totalDetections": 101,
       "totalFixes": 0,
       "totalIgnored": 0,
       "totalFalsePositives": 0,
@@ -14,12 +14,48 @@
           "ignoredCount": 0,
           "falsePositiveCount": 0,
           "adjustedConfidence": null,
-          "lastUpdatedAt": "2026-10-13T18:08:01.319Z"
+          "lastUpdatedAt": "2026-10-14T00:39:08.241Z"
         }
       },
       "suppressed": false,
       "firstSeenAt": "2026-10-05T17:47:31.038Z",
-      "lastSeenAt": "2026-10-13T18:08:01.319Z"
+      "lastSeenAt": "2026-10-14T00:39:08.241Z"
+    },
+    "XSS": {
+      "totalDetections": 2,
+      "totalFixes": 0,
+      "totalIgnored": 0,
+      "totalFalsePositives": 0,
+      "ruleAdjustments": {
+        "SENTINEL-XSS-001": {
+          "fixedCount": 0,
+          "ignoredCount": 0,
+          "falsePositiveCount": 0,
+          "adjustedConfidence": null,
+          "lastUpdatedAt": "2026-10-14T00:39:08.242Z"
+        }
+      },
+      "suppressed": false,
+      "firstSeenAt": "2026-10-14T00:39:08.241Z",
+      "lastSeenAt": "2026-10-14T00:39:08.242Z"
+    },
+    "WEAK_CRYPTOGRAPHY": {
+      "totalDetections": 1,
+      "totalFixes": 0,
+      "totalIgnored": 0,
+      "totalFalsePositives": 0,
+      "ruleAdjustments": {
+        "SENTINEL-A02-001": {
+          "fixedCount": 0,
+          "ignoredCount": 0,
+          "falsePositiveCount": 0,
+          "adjustedConfidence": null,
+          "lastUpdatedAt": "2026-10-14T00:39:08.242Z"
+        }
+      },
+      "suppressed": false,
+      "firstSeenAt": "2026-10-14T00:39:08.242Z",
+      "lastSeenAt": "2026-10-14T00:39:08.242Z"
     }
   },
   "suppressedRules": {},

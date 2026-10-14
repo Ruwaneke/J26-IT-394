@@ -2,14 +2,12 @@
  * Sentinel — Project Store
  *
  * Manages Projects, Shifts, and ShiftSessions.
- * All data is persisted to sentinel/src/DATA/:
- *   projects.json       — all projects
- *   shifts.json         — all shifts
- *   shift_sessions.json — all completed + active sessions
+ * All data is persisted to Neon PostgreSQL (sentinel_documents table):
+ *   projects, shifts, shift_sessions collections
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
+import { NeonDatabaseService } from './neonDatabaseService.js';
 
 // ─── Core Types ───────────────────────────────────────────────────────────────
 
@@ -88,19 +86,13 @@ export interface ShiftSession {
 // ─── Project Store ─────────────────────────────────────────────────────────────
 
 export class ProjectStore {
-  private readonly dataDir: string;
-
   // In-memory caches
   private projects: Project[]      = [];
   private shifts: Shift[]          = [];
   private sessions: ShiftSession[] = [];
 
-  constructor(extensionPath: string) {
-    this.dataDir = path.join(extensionPath, 'src', 'data');
-    if (!fs.existsSync(this.dataDir)) {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    }
-    this.load();
+  constructor(_extensionPath?: string) {
+    void this.hydrate();
   }
 
   // ─── Projects ───────────────────────────────────────────────────────────────
@@ -126,7 +118,6 @@ export class ProjectStore {
   }
 
   getProjects(supervisorId?: string): Project[] {
-    this.loadProjects();
     if (supervisorId) {
       return this.projects.filter(p => p.supervisorId === supervisorId);
     }
@@ -134,12 +125,10 @@ export class ProjectStore {
   }
 
   getProject(projectId: string): Project | undefined {
-    this.loadProjects();
     return this.projects.find(p => p.id === projectId);
   }
 
   updateProjectStatus(projectId: string, status: ProjectStatus): boolean {
-    this.loadProjects();
     const p = this.projects.find(p => p.id === projectId);
     if (!p) { return false; }
     p.status = status;
@@ -148,7 +137,6 @@ export class ProjectStore {
   }
 
   deleteProject(projectId: string): boolean {
-    this.loadProjects();
     const idx = this.projects.findIndex(p => p.id === projectId);
     if (idx === -1) { return false; }
     this.projects.splice(idx, 1);
@@ -191,7 +179,6 @@ export class ProjectStore {
   }
 
   getShifts(projectId?: string): Shift[] {
-    this.loadShifts();
     if (projectId) {
       return this.shifts.filter(s => s.projectId === projectId);
     }
@@ -200,17 +187,14 @@ export class ProjectStore {
 
   /** Get all shifts assigned to a specific developer */
   getShiftsForDeveloper(developerId: string): Shift[] {
-    this.loadShifts();
     return this.shifts.filter(s => s.assignedDeveloperIds.includes(developerId));
   }
 
   getShift(shiftId: string): Shift | undefined {
-    this.loadShifts();
     return this.shifts.find(s => s.id === shiftId);
   }
 
   updateShiftStatus(shiftId: string, status: ShiftStatus): boolean {
-    this.loadShifts();
     const s = this.shifts.find(s => s.id === shiftId);
     if (!s) { return false; }
     s.status = status;
@@ -223,7 +207,6 @@ export class ProjectStore {
     developerIds: string[],
     developerNames: string[],
   ): boolean {
-    this.loadShifts();
     const s = this.shifts.find(s => s.id === shiftId);
     if (!s) { return false; }
     s.assignedDeveloperIds   = developerIds;
@@ -233,7 +216,6 @@ export class ProjectStore {
   }
 
   deleteShift(shiftId: string): boolean {
-    this.loadShifts();
     const idx = this.shifts.findIndex(s => s.id === shiftId);
     if (idx === -1) { return false; }
     this.shifts.splice(idx, 1);
@@ -251,7 +233,6 @@ export class ProjectStore {
     developerDisplayName: string,
     githubAvatarUrl?: string,
   ): ShiftSession {
-    this.loadSessions();
 
     // Mark any previously active session for this dev as ended (safety)
     for (const s of this.sessions) {
@@ -291,7 +272,6 @@ export class ProjectStore {
     sessionId: string,
     finding: SessionFinding,
   ): void {
-    this.loadSessions();
     const session = this.sessions.find(s => s.id === sessionId);
     if (!session || session.endedAt !== null) { return; }
 
@@ -304,7 +284,6 @@ export class ProjectStore {
 
   /** End a shift session and generate its summary */
   endSession(sessionId: string): ShiftSession | null {
-    this.loadSessions();
     const session = this.sessions.find(s => s.id === sessionId);
     if (!session) { return null; }
 
@@ -320,7 +299,6 @@ export class ProjectStore {
 
   /** Get the active (not yet ended) session for a developer */
   getActiveSession(developerId: string): ShiftSession | null {
-    this.loadSessions();
     return this.sessions.find(
       s => s.developerId === developerId && s.endedAt === null
     ) ?? null;
@@ -328,13 +306,11 @@ export class ProjectStore {
 
   /** Get all sessions for a shift */
   getSessionsForShift(shiftId: string): ShiftSession[] {
-    this.loadSessions();
     return this.sessions.filter(s => s.shiftId === shiftId);
   }
 
   /** Get all completed sessions for a developer */
   getSessionsForDeveloper(developerId: string): ShiftSession[] {
-    this.loadSessions();
     return this.sessions
       .filter(s => s.developerId === developerId && s.endedAt !== null)
       .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
@@ -342,7 +318,6 @@ export class ProjectStore {
 
   /** Get all sessions (for supervisor overview) */
   getAllSessions(): ShiftSession[] {
-    this.loadSessions();
     return [...this.sessions];
   }
 
@@ -470,54 +445,32 @@ export class ProjectStore {
 
   // ─── Persistence ────────────────────────────────────────────────────────────
 
-  private load(): void {
-    this.loadProjects();
-    this.loadShifts();
-    this.loadSessions();
-  }
-
-  private loadProjects(): void {
-    try {
-      const raw = fs.readFileSync(path.join(this.dataDir, 'projects.json'), 'utf8');
-      this.projects = JSON.parse(raw) as Project[];
-    } catch { this.projects = []; }
-  }
-
-  private loadShifts(): void {
-    try {
-      const raw = fs.readFileSync(path.join(this.dataDir, 'shifts.json'), 'utf8');
-      this.shifts = JSON.parse(raw) as Shift[];
-    } catch { this.shifts = []; }
-  }
-
-  private loadSessions(): void {
-    try {
-      const raw = fs.readFileSync(path.join(this.dataDir, 'shift_sessions.json'), 'utf8');
-      this.sessions = JSON.parse(raw) as ShiftSession[];
-    } catch { this.sessions = []; }
+  /** Load projects, shifts and sessions from Neon PostgreSQL into the in-memory cache. */
+  async hydrate(): Promise<void> {
+    const db = NeonDatabaseService.getInstance();
+    const [p, s, ss] = await Promise.all([
+      db.loadCollection<Project[]>('projects'),
+      db.loadCollection<Shift[]>('shifts'),
+      db.loadCollection<ShiftSession[]>('shift_sessions'),
+    ]);
+    this.projects = p.find(d => d.key === 'all')?.data ?? this.projects;
+    this.shifts   = s.find(d => d.key === 'all')?.data ?? this.shifts;
+    this.sessions = ss.find(d => d.key === 'all')?.data ?? this.sessions;
   }
 
   private flushProjects(): void {
-    this.write('projects.json', this.projects);
+    this.write('projects', this.projects);
   }
 
   private flushShifts(): void {
-    this.write('shifts.json', this.shifts);
+    this.write('shifts', this.shifts);
   }
 
   private flushSessions(): void {
-    this.write('shift_sessions.json', this.sessions);
+    this.write('shift_sessions', this.sessions);
   }
 
-  private write(filename: string, data: unknown): void {
-    try {
-      fs.writeFileSync(
-        path.join(this.dataDir, filename),
-        JSON.stringify(data, null, 2),
-        'utf8'
-      );
-    } catch (err) {
-      console.error(`[ProjectStore] Failed to write ${filename}:`, err);
-    }
+  private write(collection: string, data: unknown): void {
+    void NeonDatabaseService.getInstance().saveDocument(collection, 'all', data);
   }
 }

@@ -6,7 +6,7 @@
  * marked as false-positive, repeatedly ignored, or repeatedly fixed.
  *
  * Data is stored at:
- *   sentinel/src/DATA/<developerId>_learning.json
+ *   Neon PostgreSQL → sentinel_documents (collection 'learning', key = developerId)
  *
  * The store is queried by the AI-Enhanced Analyzer to:
  *   1. Suppress high-noise patterns per file/developer
@@ -14,8 +14,7 @@
  *   3. Provide rich behavioural context to the AI feedback prompt
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import { NeonDatabaseService } from '../data/neonDatabaseService.js';
 import { VulnerabilityType } from '../analyzer/types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -89,15 +88,11 @@ export type LearningEvent =
 // ─── Store ───────────────────────────────────────────────────────────────────
 
 export class DeveloperLearningStore {
-  private readonly dataDir: string;
   /** In-memory cache: developerId → profile */
   private cache: Map<string, DeveloperLearningProfile> = new Map();
 
-  constructor(extensionPath: string) {
-    this.dataDir = path.join(extensionPath, 'src', 'data');
-    if (!fs.existsSync(this.dataDir)) {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    }
+  constructor(_extensionPath?: string) {
+    void this.hydrate();
   }
 
   // ─── Public API ──────────────────────────────────────────────────────────
@@ -303,34 +298,20 @@ export class DeveloperLearningStore {
   }
 
   private load(developerId: string): DeveloperLearningProfile | null {
-    // Check memory cache first
-    if (this.cache.has(developerId)) {
-      return this.cache.get(developerId)!;
-    }
-    // Try disk
-    const filePath = this.profilePath(developerId);
-    if (!fs.existsSync(filePath)) { return null; }
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const profile = JSON.parse(raw) as DeveloperLearningProfile;
-      this.cache.set(developerId, profile);
-      return profile;
-    } catch {
-      return null;
+    return this.cache.get(developerId) ?? null;
+  }
+
+  /** Load all learning profiles from Neon PostgreSQL into the in-memory cache. */
+  async hydrate(): Promise<void> {
+    const docs = await NeonDatabaseService.getInstance()
+      .loadCollection<DeveloperLearningProfile>('learning');
+    for (const d of docs) {
+      if (!this.cache.has(d.key)) { this.cache.set(d.key, d.data); }
     }
   }
 
   private flush(developerId: string, profile: DeveloperLearningProfile): void {
-    const filePath = this.profilePath(developerId);
-    try {
-      fs.writeFileSync(filePath, JSON.stringify(profile, null, 2), 'utf-8');
-    } catch (err) {
-      console.error(`[LearningStore] Failed to write profile for ${developerId}:`, err);
-    }
-  }
-
-  private profilePath(developerId: string): string {
-    return path.join(this.dataDir, `${developerId}_learning.json`);
+    void NeonDatabaseService.getInstance().saveDocument('learning', developerId, profile);
   }
 }
 

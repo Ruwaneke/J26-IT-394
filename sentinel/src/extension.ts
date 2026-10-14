@@ -22,7 +22,7 @@ import { NeonDatabaseService } from './data/neonDatabaseService.js';
 import { AuthManager } from './auth/authManager.js';
 import { buildLoginHtml } from './webview/loginView.js';
 import { buildDeveloperDashboardHtml } from './webview/developerDashboard.js';
-import { buildSupervisorDashboardHtml } from './webview/supervisorDashboard.js';
+import { buildSupervisorDashboardHtml, setDeveloperStats } from './webview/supervisorDashboard.js';
 import { buildAdminDashboardHtml } from './webview/adminDashboard.js';
 import { AIEnhancedAnalyzer, AIEnhancedAnalyzerConfig } from './ai/aiEnhancedAnalyzer.js';
 import { DeveloperLearningStore } from './ai/developerLearningStore.js';
@@ -68,7 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
   diagnosticManager = new DiagnosticManager();
   eventClient = new SecurityEventClient();
 
-  // Initialise developer record store — persists findings to src/DATA/<developerId>_vulnerability_records.json
+  // Initialise developer record store — persists findings to Neon PostgreSQL
   recordStore = new DeveloperRecordStore(context.extensionPath);
 
   // Initialise the Developer Learning Store — persists per-developer mistake learning data
@@ -251,7 +251,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   log(`Session: ${eventClient.getSessionId()}`);
   log(`Rules loaded: ${analyzer.getRules().map(r => r.ruleName).join(', ')}`);
-  log(`Developer records → ${recordStore.getRecordFilePath()}`);
+  log('Developer records → Neon PostgreSQL');
 }
 
 // ─── deactivate() ─────────────────────────────────────────────────────────────
@@ -593,10 +593,11 @@ async function refreshDashboard(): Promise<void> {
     );
   } else if (session.role === 'supervisor') {
     dashboardPanel.title = 'Sentinel — Supervisor Dashboard';
+    setDeveloperStats(await NeonDatabaseService.getInstance().getDeveloperStatsSummary());
     const supId      = session.githubUsername ?? session.username;
     const projects   = projectStore.getProjects(supId);
     const shifts     = projectStore.getShifts();
-    const allUsers   = authManager.getAllUsers()
+    const allUsers   = (await authManager.getAllUsers())
       .filter(u => u.role === 'developer')
       .map(u => ({
         id: u.id, username: u.username, displayName: u.displayName,
@@ -611,10 +612,11 @@ async function refreshDashboard(): Promise<void> {
   } else if (session.role === 'administrator') {
     dashboardPanel.title = 'Sentinel — Admin Dashboard';
     const config = vscode.workspace.getConfiguration('sentinel');
+    setDeveloperStats(await NeonDatabaseService.getInstance().getDeveloperStatsSummary());
     const packageJson = require(path.join(extensionContext.extensionPath, 'package.json'));
     dashboardPanel.webview.html = buildAdminDashboardHtml(
       session,
-      authManager.getAllUsers(),
+      await authManager.getAllUsers(),
       dataDir,
       cspSource,
       logoUri,
@@ -792,23 +794,25 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
     }
 
     case 'LOGIN': {
-      const session = authManager.login(message.username as string, message.password as string);
-      if (session) {
-        log(`🔐 Login: ${session.username} (${session.role})`);
-        refreshDashboard();
-      } else {
-        // Show login screen again with error
-        if (dashboardPanel) {
-          const logoUri = dashboardPanel.webview.asWebviewUri(
-            vscode.Uri.joinPath(extensionUri, 'resources', 'sentinel-logo.png')
-          ).toString();
-          dashboardPanel.webview.html = buildLoginHtml(
-            dashboardPanel.webview.cspSource,
-            logoUri,
-            'Invalid username or password. Please try again.',
-          );
+      void (async () => {
+        const session = await authManager.login(message.username as string, message.password as string);
+        if (session) {
+          log(`🔐 Login: ${session.username} (${session.role})`);
+          refreshDashboard();
+        } else {
+          // Show login screen again with error
+          if (dashboardPanel) {
+            const logoUri = dashboardPanel.webview.asWebviewUri(
+              vscode.Uri.joinPath(extensionUri, 'resources', 'sentinel-logo.png')
+            ).toString();
+            dashboardPanel.webview.html = buildLoginHtml(
+              dashboardPanel.webview.cspSource,
+              logoUri,
+              'Invalid username or password. Please try again.',
+            );
+          }
         }
-      }
+      })();
       break;
     }
 
@@ -821,22 +825,24 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
     }
 
     case 'ADMIN_ADD_USER': {
-      const result = authManager.addUser(
+      void authManager.addUser(
         message.username as string,
         message.password as string,
         message.role as 'developer' | 'supervisor' | 'administrator',
         message.displayName as string,
         message.email as string,
-      );
-      log(`[Admin] Add user "${message.username as string}": ${result.message}`);
-      dashboardPanel?.webview.postMessage({ command: 'ADMIN_ADD_RESULT', ...result });
+      ).then(result => {
+        log(`[Admin] Add user "${message.username as string}": ${result.message}`);
+        dashboardPanel?.webview.postMessage({ command: 'ADMIN_ADD_RESULT', ...result });
+      });
       break;
     }
 
     case 'ADMIN_REMOVE_USER': {
-      const result = authManager.removeUser(message.userId as string);
-      log(`[Admin] Remove user "${message.username as string}": ${result.message}`);
-      dashboardPanel?.webview.postMessage({ command: 'ADMIN_USER_RESULT', ...result });
+      void authManager.removeUser(message.userId as string).then(result => {
+        log(`[Admin] Remove user "${message.username as string}": ${result.message}`);
+        dashboardPanel?.webview.postMessage({ command: 'ADMIN_USER_RESULT', ...result });
+      });
       break;
     }
 

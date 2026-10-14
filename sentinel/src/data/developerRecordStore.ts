@@ -15,7 +15,6 @@
  * the same file is re-analysed.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { SecurityFinding } from '../analyzer/types.js';
@@ -127,7 +126,6 @@ export class DeveloperRecordStore {
     const record = this.buildRecord(finding, developerId, githubUsername, sessionId);
 
     try {
-      await this.appendRecord(developerId, record);
       this.savedFindingIds.add(finding.id);
 
       // Persist to Neon PostgreSQL with full contextual explanation & status
@@ -255,45 +253,10 @@ export class DeveloperRecordStore {
   }
 
   /**
-   * Load the existing JSON array for this developer (or start fresh),
-   * push the new record, and write back atomically.
-   */
-  private async appendRecord(
-    developerId: string,
-    record: DeveloperVulnerabilityRecord,
-  ): Promise<void> {
-    const filePath = path.join(
-      this.dataDir,
-      `${developerId}_vulnerability_records.json`,
-    );
-
-    // Load existing records (or start with an empty array)
-    let existing: DeveloperVulnerabilityRecord[] = [];
-    if (fs.existsSync(filePath)) {
-      try {
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          existing = parsed as DeveloperVulnerabilityRecord[];
-        }
-      } catch {
-        // If the file is corrupt, start fresh rather than crashing
-        existing = [];
-      }
-    }
-
-    // Append and write
-    existing.push(record);
-    fs.writeFileSync(filePath, JSON.stringify(existing, null, 2), 'utf-8');
-  }
-
-  /**
-   * Ensure the DATA/ directory exists, creating it (and any parents) if needed.
+   * Legacy hook kept for compatibility; nothing is written to disk anymore.
    */
   private ensureDataDir(): void {
-    if (!fs.existsSync(this.dataDir)) {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    }
+    // no-op: persistence is handled by Neon PostgreSQL
   }
 
   /**
