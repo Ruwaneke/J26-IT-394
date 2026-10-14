@@ -252,13 +252,10 @@ def _write_jsonl(path, rows):
             f.write(json.dumps(row) + "\n")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate simulated security events.")
-    parser.add_argument("--seed", type=int, default=None, help="override the seed in config.yaml")
-    args = parser.parse_args()
-
+def run(seed=None):
+    """Simulate and write events.jsonl, sessions.jsonl and developers.csv."""
     cfg = load_config()
-    events, sessions, profiles = simulate(cfg, seed=args.seed)
+    events, sessions, profiles = simulate(cfg, seed=seed)
 
     _write_jsonl(resolve(cfg["paths"]["events"]), events)
     _write_jsonl(resolve(cfg["paths"]["sessions"]), sessions)
@@ -268,9 +265,15 @@ def main():
         writer.writerows(profiles)
 
     counts = {a: sum(p["archetype"] == a for p in profiles) for a in ARCHETYPES}
-    seed = cfg["seed"] if args.seed is None else args.seed
+    seed = cfg["seed"] if seed is None else seed
     print(f"SIMULATED data (seed={seed}): "
           f"{len(events)} events, {len(sessions)} sessions, {len(profiles)} developers {counts}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate simulated security events.")
+    parser.add_argument("--seed", type=int, default=None, help="override the seed in config.yaml")
+    run(seed=parser.parse_args().seed)
 
 
 if __name__ == "__main__":
