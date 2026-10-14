@@ -123,6 +123,77 @@ correlation:
   alpha: 0.05
   output: outputs/correlations.json
 
+recommend:
+  recent_weeks: 4                     # "recent" = the last 4 study weeks
+  max_recommendations: 3
+  direction_tolerance:                # forecast vs the developer's recent mean
+    vuln_count_relative: 0.15         # flat if |forecast - recent| <= max(15% of recent, 0.5)
+    vuln_count_min_abs: 0.5
+    fix_rate_abs: 0.05                # flat if |forecast - recent| <= 5 percentage points
+  type_labels:
+    SQL_INJECTION: SQL injection
+    XSS: cross-site scripting (XSS)
+    HARDCODED_SECRET: hard-coded secrets
+    COMMAND_INJECTION: command injection
+  type_tips:
+    SQL_INJECTION: use parameterised queries instead of building SQL strings
+    XSS: encode output and avoid inserting raw HTML into the page
+    HARDCODED_SECRET: move secrets into environment variables or a secrets manager
+    COMMAND_INJECTION: pass arguments as a list to the process API and avoid running through a shell
+  # Each rule fires when ALL of its conditions hold. ops: eq, ne, in, gt, gte, lt, lte, exists.
+  # A condition on a missing value (e.g. no recent findings) is false.
+  rules:
+    - id: R1
+      priority: 1
+      when:
+        - {field: risk_band, op: eq, value: HIGH}
+        - {field: ignore_rate, op: gte, value: 0.30}
+      text: "Research risk profile based on measured behaviour: HIGH. {ignore_rate_pct} of findings in the last 4 weeks were ignored. Reviewing ignored findings, starting with HIGH-severity ones, is the most direct step."
+    - id: R2
+      priority: 1
+      when:
+        - {field: risk_band, op: in, value: [MEDIUM, HIGH]}
+        - {field: fix_rate, op: lt, value: 0.50}
+      text: "Fix rate in the last 4 weeks was {fix_rate_pct}. The [Fix] action on open findings in the files currently being edited is a quick way to raise it."
+    - id: R3
+      priority: 2
+      when:
+        - {field: repeat_rate, op: gte, value: 0.50}
+      text: "{repeat_rate_pct} of recent findings repeat a vulnerability type in a file already flagged in the previous 4 weeks. A focused review of those files may stop the repeats."
+    - id: R4
+      priority: 2
+      when:
+        - {field: forecast_vuln_direction, op: eq, value: up}
+      text: "Findings are forecast to rise to about {forecast_vuln} per week (recent average {recent_vuln}). Extra review time for new code may help."
+    - id: R5
+      priority: 2
+      when:
+        - {field: forecast_fix_direction, op: eq, value: down}
+        - {field: risk_band, op: in, value: [MEDIUM, HIGH]}
+      text: "Fix rate is forecast to drop to about {forecast_fix_pct} (recent {recent_fix_pct})."
+    - id: R6
+      priority: 3
+      when:
+        - {field: response_time_sec, op: gt, value: 900}
+      text: "Average response time to findings was {response_time_min} minutes in the last 4 weeks. Handling findings while the code is fresh is usually quicker."
+    - id: R7
+      priority: 3
+      when:
+        - {field: risk_band, op: in, value: [MEDIUM, HIGH]}
+        - {field: dominant_type, op: exists}
+      text: "Most recent findings are {dominant_type_label}: {type_tip}."
+    - id: R8
+      priority: 3
+      when:
+        - {field: risk_band, op: eq, value: LOW}
+        - {field: forecast_vuln_direction, op: in, value: [down, flat]}
+      text: "Research risk profile based on measured behaviour: LOW, and findings are not forecast to rise. Current practice appears to be working."
+  fallback:
+    id: R0
+    priority: 3
+    text: "No specific rule applies this period. Keep reviewing findings as they appear."
+  output: outputs/recommendations.json
+
 simulation:
   n_developers: 60
   archetype_mix: {improving: 0.30, stagnant: 0.30, worsening: 0.20, erratic: 0.20}
