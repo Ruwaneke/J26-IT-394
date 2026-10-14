@@ -72,6 +72,7 @@ export enum DeveloperAction {
   MARKED_FALSE_POSITIVE = 'MARKED_FALSE_POSITIVE',
   DISMISSED           = 'DISMISSED',
   FIXED               = 'FIXED',
+  REOPEN              = 'REOPEN',
 }
 
 // ─── Security Event (sent to Member 2 backend) ───────────────────────────────
