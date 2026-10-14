@@ -4,10 +4,12 @@ import com.sentinel.tracker.dto.CreateSecurityEventRequest;
 import com.sentinel.tracker.dto.SecurityEventResponse;
 import com.sentinel.tracker.entity.Developer;
 import com.sentinel.tracker.entity.SecurityEvent;
+import com.sentinel.tracker.entity.VulnerabilityLifecycleHistory;
 import com.sentinel.tracker.enums.SecurityEventStatus;
 import com.sentinel.tracker.exception.ResourceNotFoundException;
 import com.sentinel.tracker.repository.DeveloperRepository;
 import com.sentinel.tracker.repository.SecurityEventRepository;
+import com.sentinel.tracker.repository.VulnerabilityLifecycleHistoryRepository;
 import com.sentinel.tracker.service.SecurityEventService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +22,9 @@ import java.util.stream.Collectors;
 
 /**
  * Implementation of {@link SecurityEventService}.
+ *
+ * Creating a security event also records its initial lifecycle history entry
+ * (previousStatus = null, newStatus = DETECTED, changedBy = SYSTEM) in the same transaction.
  */
 @Service
 @RequiredArgsConstructor
@@ -27,8 +32,12 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class SecurityEventServiceImpl implements SecurityEventService {
 
+    /** changedBy value for lifecycle transitions made by the backend rather than a developer. */
+    public static final String SYSTEM_ACTOR = "SYSTEM";
+
     private final SecurityEventRepository securityEventRepository;
     private final DeveloperRepository developerRepository;
+    private final VulnerabilityLifecycleHistoryRepository lifecycleHistoryRepository;
 
     @Override
     @Transactional
@@ -55,6 +64,17 @@ public class SecurityEventServiceImpl implements SecurityEventService {
                 .build();
 
         SecurityEvent saved = securityEventRepository.save(event);
+
+        // Initial lifecycle entry: (none) -> DETECTED, recorded at detection time
+        VulnerabilityLifecycleHistory initialHistory = VulnerabilityLifecycleHistory.builder()
+                .securityEvent(saved)
+                .previousStatus(null)
+                .newStatus(SecurityEventStatus.DETECTED)
+                .changedAt(detectedAt)
+                .changedBy(SYSTEM_ACTOR)
+                .build();
+        lifecycleHistoryRepository.save(initialHistory);
+
         log.info("SecurityEvent created with id: {}", saved.getId());
         return SecurityEventResponse.from(saved);
     }

@@ -144,4 +144,125 @@ class BehaviourAnalysisServiceTest {
         DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
         assertThat(response.getBehaviourClassification()).isEqualTo("INSUFFICIENT_DATA");
     }
+
+    @Test
+    void multipleFixActionsOnSameEvent_countOnce() {
+        SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.HIGH);
+        createEvent(2L, "XSS", Severity.HIGH);
+
+        createLog(e1, BehaviourAction.FIX, 10L);
+        createLog(e1, BehaviourAction.FIX, 20L);
+        createLog(e1, BehaviourAction.FIX, 30L);
+        createLog(e1, BehaviourAction.OPEN, 5L);
+        createLog(e1, BehaviourAction.OPEN, 6L);
+        createLog(e1, BehaviourAction.IGNORE, 7L);
+        createLog(e1, BehaviourAction.IGNORE, 8L);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getFixedCount()).isEqualTo(1L);
+        assertThat(response.getOpenedCount()).isEqualTo(1L);
+        assertThat(response.getIgnoredCount()).isEqualTo(1L);
+        assertThat(response.getFixRate()).isEqualTo(50.0);
+        assertThat(response.getIgnoreRate()).isEqualTo(50.0);
+        assertThat(response.getHighSeverityFixRate()).isEqualTo(50.0);
+    }
+
+    @Test
+    void ratesNeverExceed100_evenWithRepeatedActions() {
+        SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.CRITICAL);
+
+        createLog(e1, BehaviourAction.FIX, 10L);
+        createLog(e1, BehaviourAction.FIX, 10L);
+        createLog(e1, BehaviourAction.IGNORE, 10L);
+        createLog(e1, BehaviourAction.DISMISS, 10L);
+        createLog(e1, BehaviourAction.REOPEN, 10L);
+        createLog(e1, BehaviourAction.REOPEN, 10L);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getFixRate()).isEqualTo(100.0);
+        assertThat(response.getIgnoreRate()).isEqualTo(100.0);
+        assertThat(response.getReopenRate()).isEqualTo(100.0);
+        assertThat(response.getHighSeverityFixRate()).isEqualTo(100.0);
+    }
+
+    @Test
+    void actionsWithoutOrOutsideOwnEvents_areNotCounted() {
+        createEvent(1L, "SQL_INJECTION", Severity.HIGH);
+
+        SecurityEvent otherDevelopersEvent = new SecurityEvent();
+        otherDevelopersEvent.setId(99L);
+        otherDevelopersEvent.setSeverity(Severity.HIGH);
+
+        createLog(otherDevelopersEvent, BehaviourAction.FIX, 10L);
+        createLog(null, BehaviourAction.FIX, null);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getFixedCount()).isZero();
+        assertThat(response.getFixRate()).isEqualTo(0.0);
+        assertThat(response.getHighSeverityFixRate()).isEqualTo(0.0);
+    }
+
+    @Test
+    void zeroEvents_returnsZeroRatesAndNoAutomaticHighSeverityScore() {
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getTotalSecurityEvents()).isZero();
+        assertThat(response.getFixedCount()).isZero();
+        assertThat(response.getOpenedCount()).isZero();
+        assertThat(response.getIgnoredCount()).isZero();
+        assertThat(response.getFixRate()).isEqualTo(0.0);
+        assertThat(response.getIgnoreRate()).isEqualTo(0.0);
+        assertThat(response.getReopenRate()).isEqualTo(0.0);
+        assertThat(response.getHighSeverityFixRate()).isNull();
+        assertThat(response.getBehaviourClassification()).isEqualTo("INSUFFICIENT_DATA");
+    }
+
+    @Test
+    void noHighSeverityEvents_highSeverityFixRateIsNotApplicable() {
+        SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.LOW);
+        SecurityEvent e2 = createEvent(2L, "XSS", Severity.MEDIUM);
+        SecurityEvent e3 = createEvent(3L, "CSRF", Severity.LOW);
+
+        createLog(e1, BehaviourAction.FIX, 10L);
+        createLog(e2, BehaviourAction.FIX, 10L);
+        createLog(e3, BehaviourAction.FIX, 10L);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getHighSeverityFixRate()).isNull();
+        assertThat(response.getFixRate()).isEqualTo(100.0);
+        // Not penalised or rewarded for missing high-severity events
+        assertThat(response.getBehaviourClassification()).isEqualTo("SECURITY_RESPONSIVE");
+    }
+
+    @Test
+    void mixedSeverityEvents_highSeverityFixRateUsesOnlyHighAndCritical() {
+        SecurityEvent high = createEvent(1L, "SQL_INJECTION", Severity.HIGH);
+        SecurityEvent critical = createEvent(2L, "COMMAND_INJECTION", Severity.CRITICAL);
+        createEvent(3L, "HARDCODED_SECRET", Severity.HIGH);
+        SecurityEvent medium = createEvent(4L, "XSS", Severity.MEDIUM);
+        SecurityEvent low = createEvent(5L, "WEAK_HASH", Severity.LOW);
+
+        createLog(high, BehaviourAction.FIX, 10L);
+        createLog(high, BehaviourAction.FIX, 12L);   // repeat on same event – counted once
+        createLog(critical, BehaviourAction.FIX, 20L);
+        createLog(medium, BehaviourAction.FIX, 30L);
+        createLog(low, BehaviourAction.FIX, 40L);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getFixedCount()).isEqualTo(4L);
+        assertThat(response.getFixRate()).isEqualTo(80.0);              // 4 of 5 events
+        assertThat(response.getHighSeverityFixRate()).isEqualTo(66.7);  // 2 of 3 HIGH/CRITICAL events
+        assertThat(response.getBehaviourClassification()).isEqualTo("SECURITY_NEUTRAL");
+    }
 }

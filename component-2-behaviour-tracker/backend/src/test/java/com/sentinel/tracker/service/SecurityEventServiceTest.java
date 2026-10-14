@@ -4,16 +4,19 @@ import com.sentinel.tracker.dto.CreateSecurityEventRequest;
 import com.sentinel.tracker.dto.SecurityEventResponse;
 import com.sentinel.tracker.entity.Developer;
 import com.sentinel.tracker.entity.SecurityEvent;
+import com.sentinel.tracker.entity.VulnerabilityLifecycleHistory;
 import com.sentinel.tracker.enums.SecurityEventStatus;
 import com.sentinel.tracker.enums.Severity;
 import com.sentinel.tracker.exception.ResourceNotFoundException;
 import com.sentinel.tracker.repository.DeveloperRepository;
 import com.sentinel.tracker.repository.SecurityEventRepository;
+import com.sentinel.tracker.repository.VulnerabilityLifecycleHistoryRepository;
 import com.sentinel.tracker.service.impl.SecurityEventServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -36,6 +39,9 @@ class SecurityEventServiceTest {
 
     @Mock
     private DeveloperRepository developerRepository;
+
+    @Mock
+    private VulnerabilityLifecycleHistoryRepository lifecycleHistoryRepository;
 
     @InjectMocks
     private SecurityEventServiceImpl securityEventService;
@@ -112,6 +118,68 @@ class SecurityEventServiceTest {
                 .hasMessageContaining("999");
 
         verify(securityEventRepository, never()).save(any());
+        verifyNoInteractions(lifecycleHistoryRepository);
+    }
+
+    @Test
+    @DisplayName("createSecurityEvent – should create exactly one initial lifecycle history record")
+    void createSecurityEvent_shouldCreateInitialHistoryRecord() {
+        CreateSecurityEventRequest request = validRequest();
+
+        when(developerRepository.findById(1L)).thenReturn(Optional.of(developer));
+        when(securityEventRepository.save(any(SecurityEvent.class))).thenReturn(securityEvent);
+
+        securityEventService.createSecurityEvent(request);
+
+        ArgumentCaptor<VulnerabilityLifecycleHistory> captor =
+                ArgumentCaptor.forClass(VulnerabilityLifecycleHistory.class);
+        verify(lifecycleHistoryRepository, times(1)).save(captor.capture());
+        // History references the persisted event, not the unsaved builder instance
+        assertThat(captor.getValue().getSecurityEvent()).isSameAs(securityEvent);
+    }
+
+    @Test
+    @DisplayName("createSecurityEvent – initial transition is (null) -> DETECTED by SYSTEM at detectedAt")
+    void createSecurityEvent_shouldStoreInitialTransitionCorrectly() {
+        LocalDateTime detectedAt = LocalDateTime.of(2026, 10, 8, 9, 30, 0);
+        CreateSecurityEventRequest request = validRequest();
+        request.setDetectedAt(detectedAt);
+
+        when(developerRepository.findById(1L)).thenReturn(Optional.of(developer));
+        when(securityEventRepository.save(any(SecurityEvent.class))).thenReturn(securityEvent);
+
+        securityEventService.createSecurityEvent(request);
+
+        ArgumentCaptor<VulnerabilityLifecycleHistory> captor =
+                ArgumentCaptor.forClass(VulnerabilityLifecycleHistory.class);
+        verify(lifecycleHistoryRepository).save(captor.capture());
+        VulnerabilityLifecycleHistory history = captor.getValue();
+        assertThat(history.getPreviousStatus()).isNull();
+        assertThat(history.getNewStatus()).isEqualTo(SecurityEventStatus.DETECTED);
+        assertThat(history.getChangedBy()).isEqualTo("SYSTEM");
+        assertThat(history.getChangedAt()).isEqualTo(detectedAt);
+    }
+
+    @Test
+    @DisplayName("createSecurityEvent – initial history uses the generated detectedAt when none is supplied")
+    void createSecurityEvent_initialHistoryUsesGeneratedDetectedAt() {
+        CreateSecurityEventRequest request = validRequest();
+        request.setDetectedAt(null);
+
+        when(developerRepository.findById(1L)).thenReturn(Optional.of(developer));
+        when(securityEventRepository.save(any(SecurityEvent.class))).thenReturn(securityEvent);
+
+        securityEventService.createSecurityEvent(request);
+
+        ArgumentCaptor<SecurityEvent> eventCaptor = ArgumentCaptor.forClass(SecurityEvent.class);
+        verify(securityEventRepository).save(eventCaptor.capture());
+        ArgumentCaptor<VulnerabilityLifecycleHistory> historyCaptor =
+                ArgumentCaptor.forClass(VulnerabilityLifecycleHistory.class);
+        verify(lifecycleHistoryRepository).save(historyCaptor.capture());
+
+        assertThat(historyCaptor.getValue().getChangedAt())
+                .isNotNull()
+                .isEqualTo(eventCaptor.getValue().getDetectedAt());
     }
 
     @Test
@@ -121,5 +189,16 @@ class SecurityEventServiceTest {
 
         assertThatThrownBy(() -> securityEventService.getSecurityEventById(999L))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    private CreateSecurityEventRequest validRequest() {
+        CreateSecurityEventRequest request = new CreateSecurityEventRequest();
+        request.setDeveloperId(1L);
+        request.setVulnerabilityType("SQL_INJECTION");
+        request.setSeverity(Severity.HIGH);
+        request.setFileName("UserService.java");
+        request.setLineNumber(42);
+        request.setMessage("Potential SQL injection at line 42");
+        return request;
     }
 }

@@ -9,6 +9,7 @@ import com.sentinel.tracker.enums.Severity;
 import com.sentinel.tracker.exception.ResourceNotFoundException;
 import com.sentinel.tracker.repository.DeveloperRepository;
 import com.sentinel.tracker.repository.SecurityEventRepository;
+import com.sentinel.tracker.repository.VulnerabilityLifecycleHistoryRepository;
 import com.sentinel.tracker.service.impl.SecurityEventServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -41,6 +42,9 @@ class SecurityEventServicePhase02Test {
 
     @Mock
     private DeveloperRepository developerRepository;
+
+    @Mock
+    private VulnerabilityLifecycleHistoryRepository lifecycleHistoryRepository;
 
     @InjectMocks
     private SecurityEventServiceImpl securityEventService;
