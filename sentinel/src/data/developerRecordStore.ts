@@ -157,6 +157,15 @@ export class DeveloperRecordStore {
   }
 
   /**
+   * Clears a finding ID from the in-session deduplication cache.
+   * Called when a vulnerability is resolved so that if it is re-introduced later,
+   * it will be properly captured and updated in the database.
+   */
+  unmarkSaved(findingId: string): void {
+    this.savedFindingIds.delete(findingId);
+  }
+
+  /**
    * Dispose — clears the in-session deduplication cache and identity cache.
    */
   dispose(): void {

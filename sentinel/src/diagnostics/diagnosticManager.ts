@@ -6,8 +6,9 @@
  */
 
 import * as vscode from 'vscode';
-import { SecurityFinding, Severity, VulnerabilityType } from '../analyzer/types.js';
+import { SecurityFinding, Severity, VulnerabilityType, owaspCategoryFor } from '../analyzer/types.js';
 import { VULNERABILITY_METADATA } from './vulnerabilityMetadata.js';
+import { generateContextualExplanation } from './contextualExplainer.js';
 
 export class DiagnosticManager {
   private collection: vscode.DiagnosticCollection;
@@ -181,40 +182,50 @@ export class SentinelHoverProvider implements vscode.HoverProvider {
 
       const finding = diag.__sentinelFinding;
       const meta = VULNERABILITY_METADATA[finding.type];
+      const ctx = generateContextualExplanation(finding);
+      const owaspCat = owaspCategoryFor(finding.type);
       const confidencePct = Math.round(finding.confidence * 100);
+
+      // Check for async AI-enriched explanation or fix if present
+      const aiFix = (finding as any).aiPersonalisedFix || ctx.fixedCode;
+      const aiExpl = (finding as any).aiExplanation || ctx.fixExplanation;
 
       const md = new vscode.MarkdownString(undefined, true);
       md.isTrusted = true;
 
       // Header
-      md.appendMarkdown(`## 🛡 Sentinel — ${this.severityIcon(finding.severity)} ${meta?.title ?? finding.type}\n\n`);
+      const vulnName = meta?.title ?? finding.type.replace(/_/g, ' ');
+      md.appendMarkdown(`## 🛡️ Sentinel — ${this.severityIcon(finding.severity)} ${vulnName}\n\n`);
 
-      // Finding details
-      md.appendMarkdown(`**Severity:** \`${finding.severity}\` &nbsp;|&nbsp; **Confidence:** \`${confidencePct}%\`\n\n`);
+      // Metadata pill line
+      const owaspText = owaspCat ? `**OWASP:** \`${owaspCat.id} (${owaspCat.name})\` &nbsp;|&nbsp; ` : '';
+      md.appendMarkdown(`${owaspText}**Severity:** \`${finding.severity}\` &nbsp;|&nbsp; **Confidence:** \`${confidencePct}%\`\n\n`);
       md.appendMarkdown(`---\n\n`);
 
-      // Explanation
-      if (meta) {
-        md.appendMarkdown(`**What happened?**\n\n${meta.description}\n\n`);
-        md.appendMarkdown(`**Why is this dangerous?**\n\n${meta.impact}\n\n`);
-        md.appendMarkdown(`**Recommended fix:**\n\n${meta.recommendation}\n\n`);
+      // Contextual Root Cause & Impact
+      md.appendMarkdown(`### ❓ Why is this vulnerable?\n\n${ctx.whyDangerous || finding.message}\n\n`);
 
-        if (meta.secureExample) {
-          md.appendMarkdown(`**Secure example:**\n\`\`\`\n${meta.secureExample}\n\`\`\`\n\n`);
-        }
-      } else {
-        md.appendMarkdown(`${finding.message}\n\n`);
+      if (ctx.attackScenario) {
+        md.appendMarkdown(`### ⚡ Attack Scenario\n\n${ctx.attackScenario}\n\n`);
       }
 
-      // Action buttons
+      // AI Fix Suggestion (developer fixes code themselves by typing)
+      md.appendMarkdown(`### 🤖 Sentinel AI Fix Suggestion\n\n${aiExpl}\n\n`);
+
+      if (aiFix) {
+        md.appendMarkdown(`\`\`\`\n${aiFix}\n\`\`\`\n\n`);
+      }
+
+      md.appendMarkdown(`---\n\n`);
+      md.appendMarkdown(`*💡 **Real-Time Detection:** Type or edit your code to resolve this issue. Sentinel monitors keystrokes in real time and automatically records it as FIXED once the vulnerability is cleared!*\n\n`);
+
+      // Action buttons: Informational & Ignore (NO clickable button that auto-fixes code)
       const explainCmd = encodeURIComponent(JSON.stringify({ findingId: finding.id }));
-      const fixCmd = encodeURIComponent(JSON.stringify({ findingId: finding.id }));
       const ignoreCmd = encodeURIComponent(JSON.stringify({ findingId: finding.id }));
 
       md.appendMarkdown(
-        `[$(book) Explain](command:sentinel.explainFinding?${explainCmd}) &nbsp;&nbsp;` +
-        `[$(wrench) Fix](command:sentinel.applyFix?${fixCmd}) &nbsp;&nbsp;` +
-        `[$(eye-closed) Ignore](command:sentinel.ignoreFinding?${ignoreCmd})`
+        `[$(book) Full AI Explanation](command:sentinel.explainFinding?${explainCmd}) &nbsp;&nbsp;&nbsp;&nbsp;` +
+        `[$(eye-closed) Ignore Warning](command:sentinel.ignoreFinding?${ignoreCmd})`
       );
 
       return new vscode.Hover(md);

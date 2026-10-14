@@ -774,23 +774,51 @@ export class NeonDatabaseService {
   /**
    * Automatically detect when previously 'OPEN' vulnerabilities in a file
    * have been resolved (are no longer returned in currentActiveFindingIds).
-   * Marks them as 'FIXED' in PostgreSQL!
+   * Marks them as 'FIXED' in PostgreSQL and local memory!
+   *
+   * Triggers in real time as the developer edits/fixes code in the editor.
    */
   public async autoDetectFixedFindingsInFile(
     fileName: string,
     developerId: string,
     currentActiveFindingIds: string[]
-  ): Promise<number> {
+  ): Promise<Array<{ findingId: string; recordId: string; vulnerabilityType: string; fileName: string; lineNumber: number }>> {
+    const normFile = (fileName || '').replace(/\\/g, '/').toLowerCase();
+
     if (!this.pool || !this.isOnline) {
-      return 0;
+      // Offline fallback: update in-memory records
+      const toFixMem = this.memRecords.filter(r =>
+        (r.developerId === developerId || r.githubUsername === developerId) &&
+        (r.fileName === fileName || (r.fileName || '').replace(/\\/g, '/').toLowerCase() === normFile) &&
+        r.status === 'OPEN' &&
+        !currentActiveFindingIds.includes(r.findingId)
+      );
+
+      for (const fixed of toFixMem) {
+        fixed.status = 'FIXED';
+        fixed.fixedAt = new Date().toISOString();
+        fixed.updatedAt = new Date().toISOString();
+      }
+
+      if (toFixMem.length > 0) {
+        console.log(`[NeonDb-Offline] Auto-marked ${toFixMem.length} vulnerabilities as FIXED for ${developerId} in ${path.basename(fileName)}`);
+      }
+
+      return toFixMem.map(r => ({
+        findingId: r.findingId,
+        recordId: r.recordId,
+        vulnerabilityType: r.vulnerabilityType,
+        fileName: r.fileName,
+        lineNumber: r.lineNumber,
+      }));
     }
 
     try {
-      // Find open records for this developer and file
+      // Find open records for this developer and file (path insensitive)
       const res = await this.pool.query(
-        `SELECT finding_id, record_id, vulnerability_type
+        `SELECT finding_id, record_id, vulnerability_type, file_name, line_number
          FROM vulnerability_records
-         WHERE file_name = $1
+         WHERE (file_name = $1 OR LOWER(REPLACE(file_name, '\\', '/')) = LOWER(REPLACE($1, '\\', '/')))
            AND (developer_id = $2 OR github_username = $2)
            AND status = 'OPEN';`,
         [fileName, developerId]
@@ -801,7 +829,7 @@ export class NeonDatabaseService {
       );
 
       if (toFix.length === 0) {
-        return 0;
+        return [];
       }
 
       const findingIdsToFix = toFix.map(r => r.finding_id);
@@ -815,7 +843,7 @@ export class NeonDatabaseService {
         [findingIdsToFix, developerId]
       );
 
-      // Log automated fix event and sync local records
+      // Log automated real-time fix event and sync local records
       for (const fixed of toFix) {
         this.updateLocalRecordStatus(developerId, fixed.finding_id, 'FIXED');
         await this.logActivity({
@@ -824,24 +852,70 @@ export class NeonDatabaseService {
           actionType: 'CODE_FIX_DETECTED',
           findingId: fixed.finding_id,
           vulnerabilityType: fixed.vulnerability_type,
-          details: { file: fileName, automated: true },
+          details: { file: fileName, line: fixed.line_number, method: 'REALTIME_TYPING', timestamp: new Date().toISOString() },
         });
       }
 
-      console.log(`[NeonDb] Auto-marked ${toFix.length} vulnerabilities as FIXED for ${developerId} in ${path.basename(fileName)}`);
-      return toFix.length;
+      console.log(`[NeonDb] Real-time auto-marked ${toFix.length} vulnerabilities as FIXED for ${developerId} in ${path.basename(fileName)}`);
+      return toFix.map(r => ({
+        findingId: r.finding_id,
+        recordId: r.record_id,
+        vulnerabilityType: r.vulnerability_type,
+        fileName: r.file_name,
+        lineNumber: r.line_number,
+      }));
     } catch (err: any) {
       console.error('[NeonDb] autoDetectFixedFindingsInFile error:', err.message);
-      return 0;
+      return [];
     }
   }
 
   /**
-   * Calculate precise vulnerability progress and counts for a developer or all users.
+   * Clear all vulnerability records and activity logs from the database,
+   * optionally filtered by developer ID.
+   */
+  public async clearAllVulnerabilityRecords(developerId?: string): Promise<{ success: boolean; deletedCount: number }> {
+    if (developerId) {
+      this.memRecords = this.memRecords.filter(r => r.developerId !== developerId);
+    } else {
+      this.memRecords = [];
+    }
+
+    if (!this.pool || !this.isOnline) {
+      return { success: true, deletedCount: 0 };
+    }
+
+    try {
+      let query = 'DELETE FROM vulnerability_records';
+      const params: any[] = [];
+      if (developerId) {
+        query += ' WHERE developer_id = $1 OR github_username = $1';
+        params.push(developerId);
+      }
+      query += ';';
+      const res = await this.pool.query(query, params);
+
+      if (developerId) {
+        await this.pool.query('DELETE FROM user_activity_logs WHERE developer_id = $1 OR github_username = $1;', [developerId]);
+      } else {
+        await this.pool.query('DELETE FROM user_activity_logs;');
+      }
+
+      console.log(`[NeonDb] Cleared vulnerability records and activity logs (${res.rowCount || 0} rows deleted).`);
+      return { success: true, deletedCount: res.rowCount || 0 };
+    } catch (err: any) {
+      console.error('[NeonDb] clearAllVulnerabilityRecords error:', err.message);
+      return { success: false, deletedCount: 0 };
+    }
+  }
+
+  /**
+   * Calculate precise vulnerability progress and counts for a developer or all users,
+   * optionally filtered by a specific file.
    *
    * Formats precise percentage based on identified vs fixed findings count.
    */
-  public async getVulnerabilityStats(developerId?: string): Promise<VulnerabilityStats> {
+  public async getVulnerabilityStats(developerId?: string, fileName?: string): Promise<VulnerabilityStats> {
     const stats: VulnerabilityStats = {
       totalIdentified: 0,
       fixedCount: 0,
@@ -859,16 +933,26 @@ export class NeonDatabaseService {
 
     if (this.pool && this.isOnline) {
       try {
-        const query = developerId
-          ? `SELECT vulnerability_type, severity, status, COUNT(*) as count
-             FROM vulnerability_records
-             WHERE developer_id = $1 OR github_username = $1
-             GROUP BY vulnerability_type, severity, status;`
-          : `SELECT vulnerability_type, severity, status, COUNT(*) as count
-             FROM vulnerability_records
-             GROUP BY vulnerability_type, severity, status;`;
+        let query = `SELECT vulnerability_type, severity, status, COUNT(*) as count FROM vulnerability_records`;
+        const params: any[] = [];
+        const whereClauses: string[] = [];
 
-        const params = developerId ? [developerId] : [];
+        if (developerId) {
+          params.push(developerId);
+          whereClauses.push(`(developer_id = $${params.length} OR github_username = $${params.length})`);
+        }
+
+        if (fileName) {
+          params.push(fileName);
+          whereClauses.push(`(file_name = $${params.length} OR LOWER(REPLACE(file_name, '\\', '/')) = LOWER(REPLACE($${params.length}, '\\', '/')))`);
+        }
+
+        if (whereClauses.length > 0) {
+          query += ` WHERE ` + whereClauses.join(' AND ');
+        }
+
+        query += ` GROUP BY vulnerability_type, severity, status;`;
+
         const res = await this.pool.query(query, params);
 
         for (const row of res.rows) {
@@ -908,7 +992,7 @@ export class NeonDatabaseService {
     }
 
     // Fallback to local records calculation
-    return this.calculateLocalStats(developerId);
+    return this.calculateLocalStats(developerId, fileName);
   }
 
   /**
@@ -1045,15 +1129,17 @@ export class NeonDatabaseService {
     }
   }
 
-  private getLocalRecords(developerId?: string, statusFilter?: string, limit = 100): DbVulnerabilityRecord[] {
+  private getLocalRecords(developerId?: string, statusFilter?: string, limit = 100, fileName?: string): DbVulnerabilityRecord[] {
+    const normFile = fileName ? fileName.replace(/\\/g, '/').toLowerCase() : null;
     return this.memRecords
-      .filter(r => (!developerId || r.developerId === developerId)
-        && (!statusFilter || statusFilter === 'ALL' || r.status === statusFilter))
+      .filter(r => (!developerId || r.developerId === developerId || r.githubUsername === developerId)
+        && (!statusFilter || statusFilter === 'ALL' || r.status === statusFilter)
+        && (!normFile || r.fileName.replace(/\\/g, '/').toLowerCase() === normFile))
       .slice(0, limit);
   }
 
-  private calculateLocalStats(developerId?: string): VulnerabilityStats {
-    const list = this.getLocalRecords(developerId, 'ALL', 1000);
+  private calculateLocalStats(developerId?: string, fileName?: string): VulnerabilityStats {
+    const list = this.getLocalRecords(developerId, 'ALL', 1000, fileName);
     const stats: VulnerabilityStats = {
       totalIdentified: list.length,
       fixedCount: 0,

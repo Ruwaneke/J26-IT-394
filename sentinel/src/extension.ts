@@ -299,12 +299,29 @@ async function analyzeDocument(
   };
 
   // ── Step 1: Analyze + apply learning filters (synchronous) ──────────────
+  const previousFindings = findingsCache.get(document.uri.toString()) ?? [];
   const findings = aiAnalyzer.analyze(text, fileName, languageId, aiConfig);
   const summary  = analyzer.summarize(findings);
 
   // ── Step 2: Show diagnostics immediately (don't wait for AI) ────────────
   diagnosticManager.updateDiagnostics(document, findings);
   findingsCache.set(document.uri.toString(), findings);
+
+  // ── Step 2b: Real-time fix detection in memory (developer typed/fixed code) ──
+  const resolvedInMemory = previousFindings.filter(
+    prev => !findings.some(curr => curr.id === prev.id)
+  );
+
+  for (const resolved of resolvedInMemory) {
+    log(`🛡️ [Real-Time Fix Detected] Developer resolved ${resolved.type} at line ${resolved.lineNumber} in ${path.basename(fileName)}`);
+    aiAnalyzer.recordAction(resolved, 'FIXED', developerId);
+    void eventClient.reportAction(resolved, DeveloperAction.FIXED);
+    recordStore.unmarkSaved(resolved.id);
+    vscode.window.setStatusBarMessage(
+      `✅ Sentinel: Fixed ${resolved.type.replace(/_/g, ' ')} at line ${resolved.lineNumber}`,
+      4000
+    );
+  }
 
   if (findings.length > 0 || forceNotify) {
     logFindings(document, findings);
@@ -348,9 +365,13 @@ async function analyzeDocument(
     fileName,
     developerId,
     activeFindingIds
-  ).then(fixedCount => {
-    if (fixedCount > 0) {
-      log(`[NeonDb] Auto-marked ${fixedCount} finding(s) as FIXED in ${fileName.split('/').pop()}`);
+  ).then(fixedItems => {
+    if (fixedItems && fixedItems.length > 0) {
+      for (const item of fixedItems) {
+        log(`[NeonDb] Real-time fix recorded for ${item.vulnerabilityType} (${item.findingId}) in ${path.basename(fileName)}`);
+        recordStore.unmarkSaved(item.findingId);
+        aiAnalyzer.recordAction({ id: item.findingId, type: item.vulnerabilityType as any } as any, 'FIXED', developerId);
+      }
       void refreshDashboard();
     }
   });
@@ -431,12 +452,6 @@ function handleFixAction(findingId: string): void {
 
   void eventClient.reportAction(finding, DeveloperAction.SECURE_EXAMPLE_VIEWED);
   log(`[Action] SECURE_EXAMPLE_VIEWED — ${finding.type} at line ${finding.lineNumber}`);
-
-  // ── Learning feedback: developer viewed the fix (treat as intent to fix) ──
-  resolveDeveloperId().then(developerId => {
-    aiAnalyzer.recordAction(finding, 'FIXED', developerId);
-    log(`[AI Learning] Recorded FIXED for ${finding.type} (dev: ${developerId})`);
-  });
 }
 
 function handleIgnoreAction(findingId: string): void {
@@ -506,19 +521,15 @@ class SentinelCodeActionProvider implements vscode.CodeActionProvider {
       const findingLine = finding.lineNumber - 1;
       if (!range.contains(new vscode.Position(findingLine, 0))) { continue; }
 
-      const explainAction = new vscode.CodeAction(
-        `$(book) Sentinel: Explain ${finding.type}`, vscode.CodeActionKind.QuickFix);
-      explainAction.command = { command: 'sentinel.explainFinding', title: 'Explain', arguments: [{ findingId: finding.id }] };
-
-      const fixAction = new vscode.CodeAction(
-        `$(wrench) Sentinel: Show Secure Fix for ${finding.type}`, vscode.CodeActionKind.QuickFix);
-      fixAction.command = { command: 'sentinel.applyFix', title: 'Show Fix', arguments: [{ findingId: finding.id }] };
+      const aiSuggestAction = new vscode.CodeAction(
+        `🤖 Sentinel AI: View Fix Suggestion & Secure Example (${finding.type})`, vscode.CodeActionKind.QuickFix);
+      aiSuggestAction.command = { command: 'sentinel.explainFinding', title: 'View AI Fix Suggestion', arguments: [{ findingId: finding.id }] };
 
       const ignoreAction = new vscode.CodeAction(
-        `$(eye-closed) Sentinel: Ignore this ${finding.type} warning`, vscode.CodeActionKind.QuickFix);
+        `$(eye-closed) Sentinel: Ignore warning for this line`, vscode.CodeActionKind.QuickFix);
       ignoreAction.command = { command: 'sentinel.ignoreFinding', title: 'Ignore', arguments: [{ findingId: finding.id }] };
 
-      actions.push(explainAction, fixAction, ignoreAction);
+      actions.push(aiSuggestAction, ignoreAction);
     }
     return actions;
   }
@@ -874,17 +885,17 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
     }
 
     case 'APPLY_FIX': {
-      const findingId = message.findingId as string;
       const fileName = message.fileName as string;
-      const line = message.line as number;
-      const fixedCode = message.fixedCode as string;
-
-      applyCodeFixDirectly(fileName, line, fixedCode).then(applied => {
-        if (applied) {
-          vscode.window.showInformationMessage(`✅ Secure fix applied to ${fileName.split('/').pop()}:${line}! Re-analyzing code to verify fix...`);
-        } else {
-          vscode.window.showErrorMessage(`Could not apply fix directly to ${fileName.split('/').pop()}`);
-        }
+      const line = (message.line as number) || 1;
+      vscode.window.showInformationMessage(
+        'Sentinel: Auto-fix buttons are disabled. Please edit the code directly in your editor using the AI suggestion. Sentinel tracks changes in real time and automatically records the fix once resolved!'
+      );
+      const lineIndex = Math.max(0, line - 1);
+      vscode.workspace.openTextDocument(fileName).then(doc => {
+        vscode.window.showTextDocument(doc, {
+          selection: new vscode.Range(lineIndex, 0, lineIndex, 100),
+          preview: false,
+        });
       });
       break;
     }
@@ -1135,7 +1146,7 @@ function buildFixHtml(finding: SecurityFinding, _meta: any): string {
     <div class="code-label safe">✅ Fixed version</div>
     <pre>${escHtml(ctx.fixedCode)}</pre>
   </div>
-  <div class="note">💡 ${escHtml(ctx.fixExplanation)}</div>
+  <div class="note">💡 <strong>Remediation:</strong> ${escHtml(ctx.fixExplanation)}<br><br>✍️ <em>Edit your code in the editor to apply this fix. Sentinel monitors keystrokes in real time and automatically records this vulnerability as FIXED once cleared!</em></div>
 </body>
 </html>`;
 }

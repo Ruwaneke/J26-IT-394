@@ -329,6 +329,13 @@ body{font-family:'Inter',system-ui,sans-serif;background:#0d1117;color:#e6edf3;h
 .modal-overlay.open{display:flex}
 .modal{background:#161b22;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:24px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto}
 .modal-title{font-size:1em;font-weight:800;color:#e6edf3;margin-bottom:16px}
+@media (max-width: 860px) {
+  .app { flex-direction: column; }
+  .sidebar { width: 100%; flex-direction: row; border-right: none; border-bottom: 1px solid rgba(255,255,255,.08); padding: 8px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sidebar-logo, .sidebar-bottom, .nav-section-label { display: none; }
+  .nav-item { width: auto; white-space: nowrap; margin: 0; padding: 7px 12px; flex-shrink: 0; }
+  .content { padding: 14px 12px; }
+}
 </style>
 </head>
 <body>

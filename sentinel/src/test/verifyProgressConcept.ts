@@ -17,7 +17,7 @@ async function runTest() {
   console.log('🧪 Starting Vulnerability Resolution Concept Test...\n');
 
   const testFile = '/workspace/src/test_vulnerable_service.ts';
-  const testDev = 'HishenPerera';
+  const testDev = 'TEST_DEV_PROGRESS_VERIFY';
   const sessionId = 'TEST-VERIFY-SESSION';
 
   // 1. Simulate 6 detected vulnerabilities in the file
@@ -69,11 +69,11 @@ async function runTest() {
   const db = NeonDatabaseService.getInstance();
   await db.initialize();
 
-  // Clear any existing test records for this file and dev
+  // Clear any existing test records for this test dev
   if ((db as any).pool) {
     await (db as any).pool.query(
-      `DELETE FROM vulnerability_records WHERE file_name = $1 AND developer_id = $2;`,
-      [testFile, testDev]
+      `DELETE FROM vulnerability_records WHERE developer_id = $1;`,
+      [testDev]
     );
   }
 
@@ -86,10 +86,11 @@ async function runTest() {
 
   // Run autoDetect: all 6 are active
   const activeIdsStage1 = findings.map(f => f.id);
-  await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage1);
+  const fixedStage1Result = await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage1);
+  console.log(`   Auto-detected fixed count: ${fixedStage1Result.length}`);
 
   // Compute stats as dashboard would
-  const statsStage1 = await db.getVulnerabilityStats(testDev);
+  const statsStage1 = await db.getVulnerabilityStats(testDev, testFile);
   const totalStage1 = statsStage1.totalIdentified;
   const fixedStage1 = statsStage1.fixedCount;
   const openStage1 = statsStage1.openCount;
@@ -110,10 +111,10 @@ async function runTest() {
   // Finding #1 is corrected, remaining 5 active
   const activeFindingsStage2 = findings.slice(1);
   const activeIdsStage2 = activeFindingsStage2.map(f => f.id);
-  const autoFixedCountStage2 = await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage2);
-  console.log(`   Auto-detected fixed count: ${autoFixedCountStage2}`);
+  const fixedStage2Result = await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage2);
+  console.log(`   Auto-detected fixed count: ${fixedStage2Result.length}`);
 
-  const statsStage2 = await db.getVulnerabilityStats(testDev);
+  const statsStage2 = await db.getVulnerabilityStats(testDev, testFile);
   const totalStage2 = statsStage2.totalIdentified;
   const fixedStage2 = statsStage2.fixedCount;
   const openStage2 = activeFindingsStage2.length;
@@ -134,9 +135,10 @@ async function runTest() {
   // Findings #1, #2, #3 are fixed, remaining are #4, #5, #6
   const activeFindingsStage3 = findings.slice(3);
   const activeIdsStage3 = activeFindingsStage3.map(f => f.id);
-  await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage3);
+  const fixedStage3Result = await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage3);
+  console.log(`   Auto-detected fixed count: ${fixedStage3Result.length}`);
 
-  const statsStage3 = await db.getVulnerabilityStats(testDev);
+  const statsStage3 = await db.getVulnerabilityStats(testDev, testFile);
   const totalStage3 = statsStage3.totalIdentified;
   const fixedStage3 = statsStage3.fixedCount;
   const openStage3 = activeFindingsStage3.length;
@@ -155,9 +157,10 @@ async function runTest() {
   // ── Test Stage 4: Correct all remaining vulnerabilities (all red lines gone) ──
   console.log('\n--- STAGE 4: All 6 Fixed in Code (All Red Lines Gone) ---');
   const activeIdsStage4: string[] = []; // No active findings left!
-  await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage4);
+  const fixedStage4Result = await db.autoDetectFixedFindingsInFile(testFile, testDev, activeIdsStage4);
+  console.log(`   Auto-detected fixed count: ${fixedStage4Result.length}`);
 
-  const statsStage4 = await db.getVulnerabilityStats(testDev);
+  const statsStage4 = await db.getVulnerabilityStats(testDev, testFile);
   const totalStage4 = statsStage4.totalIdentified;
   const fixedStage4 = statsStage4.fixedCount;
   const openStage4 = 0;
@@ -176,8 +179,8 @@ async function runTest() {
   // Clean up test file records
   if ((db as any).pool) {
     await (db as any).pool.query(
-      `DELETE FROM vulnerability_records WHERE file_name = $1 AND developer_id = $2;`,
-      [testFile, testDev]
+      `DELETE FROM vulnerability_records WHERE developer_id = $1;`,
+      [testDev]
     );
   }
   await db.close();

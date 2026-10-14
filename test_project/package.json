@@ -1,0 +1,27 @@
+{
+  "name": "sentinel-vulnerability-test-project",
+  "version": "1.0.0",
+  "description": "Comprehensive test project containing representative vulnerabilities across all OWASP Top 10 categories to test Sentinel real-time detection, AI suggestions, and fix tracking",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "test": "node test-all-rules.js"
+  },
+  "keywords": [
+    "security",
+    "owasp",
+    "vulnerabilities",
+    "test-project"
+  ],
+  "author": "Sentinel Security Research",
+  "license": "ISC",
+  "dependencies": {
+    "express": "4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "node-serialize": "0.0.4",
+    "lodash": "4.17.15"
+  }
+}

@@ -156,6 +156,7 @@ select option{background:#161b22;color:#e6edf3}
 ::-webkit-scrollbar{width:5px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+@media(max-width:860px){.app{flex-direction:column}.sidebar{width:100%;flex-direction:row;overflow-x:auto;padding:8px}.sidebar-logo,.sidebar-bottom,.nav-section-label{display:none}.nav-item{width:auto;white-space:nowrap;padding:7px 12px;margin:0}.content{padding:14px 12px}}
 @media(max-width:600px){.add-form{grid-template-columns:1fr}.cfg-grid{grid-template-columns:1fr}.td-email,.td-date{display:none}}
 </style>
 </head>

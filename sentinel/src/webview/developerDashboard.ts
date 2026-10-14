@@ -173,19 +173,19 @@ export function buildDeveloperDashboardHtml(
           <div class="attack-text">${esc(ctx.attackScenario)}</div>
         </div>
 
-        <!-- Actions -->
+        <!-- Actions & AI Suggestion -->
         <div class="card-actions">
-          <button class="btn-action btn-apply" onclick="applyFix('${esc(f.id)}', '${esc(f.fileName)}', ${f.lineNumber}, ${JSON.stringify(ctx.fixedCode)})" title="Directly replaces vulnerable code with secure snippet in your file">
-            ⚡ Apply Fix to Code
+          <button class="btn-action btn-copy-fix" onclick="copyAiFix(this, ${JSON.stringify(ctx.fixedCode)})" title="Copy AI secure code suggestion to clipboard">
+            📋 Copy AI Fix Suggestion
           </button>
-          <button class="btn-action btn-inspect" onclick="jumpToCode('${esc(f.fileName)}', ${f.lineNumber})" title="Jump to line in editor to manually edit code">
-            👁️ Jump to Line
+          <button class="btn-action btn-inspect" onclick="jumpToCode('${esc(f.fileName)}', ${f.lineNumber})" title="Jump to line in editor to edit code">
+            👁️ Jump to Line in Editor
           </button>
           <button class="btn-action btn-ignore" onclick="ignoreFinding('${esc(f.id)}')">
             ✕ Ignore Warning
           </button>
-          <div class="auto-fix-hint">
-            🛡️ <em>Auto-Resolution: Correct this problem in your editor so the red line disappears. The progress bar will update automatically!</em>
+          <div class="ai-guidance-card">
+            🤖 <strong>AI Suggestion:</strong> Sentinel guides you to fix vulnerabilities manually without relying on auto-fix buttons. Edit this line in your editor using the secure guidance above. Sentinel's real-time engine monitors keystrokes and automatically marks this vulnerability as <strong>FIXED</strong> once resolved!
           </div>
         </div>
       </div>
@@ -199,25 +199,27 @@ export function buildDeveloperDashboardHtml(
     const isIgnored = r.status === 'IGNORED';
     const statusClass = isFixed ? 'status-fixed' : isIgnored ? 'status-ignored' : 'status-open';
     const statusIcon = isFixed ? '✅' : isIgnored ? '⚪' : '⏳';
+    const cleanFileName = (r.fileName || '').replace(/\\/g, '/').split('/').pop() || r.fileName;
+    const searchIdx = `${r.vulnerabilityType} ${cleanFileName} ${r.lineNumber} ${r.severity} ${r.status}`.toLowerCase();
 
     return `
-    <tr class="db-row status-${r.status.toLowerCase()}">
+    <tr class="db-row status-${r.status.toLowerCase()}" data-status="${r.status}" data-severity="${r.severity}" data-search="${esc(searchIdx)}">
       <td><span class="sev-pill-sm" style="color:${sColor}">${r.severity}</span></td>
       <td>
         <div class="row-vuln-type">${esc(r.vulnerabilityType.replace(/_/g, ' '))}</div>
         <div class="row-vuln-dev">@${esc(r.githubUsername || r.developerId)}</div>
       </td>
       <td>
-        <div class="row-file" title="${esc(r.fileName)}">${esc(r.fileName.split('/').pop() ?? r.fileName)}</div>
+        <div class="row-file" title="${esc(r.fileName)}">${esc(cleanFileName)}</div>
         <div class="row-line">Line ${r.lineNumber}</div>
       </td>
       <td><span class="status-pill ${statusClass}">${statusIcon} ${r.status}</span></td>
       <td class="row-date">${fmtDate(r.detectedAt)}</td>
-      <td>
-        <div class="table-actions">
+      <td style="text-align: right;">
+        <div class="table-actions" style="justify-content: flex-end;">
           ${isFixed
-            ? `<span class="fixed-badge">✅ Remediated (Red Line Cleared)</span>`
-            : `<button class="btn-table-jump" onclick="jumpToCode('${esc(r.fileName)}', ${r.lineNumber})">👁️ Inspect in File</button>`}
+            ? `<span class="fixed-badge">✅ Remediated</span>`
+            : `<button class="btn-table-jump" onclick="jumpToCode('${esc(r.fileName)}', ${r.lineNumber})" title="Jump to this line in your editor">👁️ Jump to Line</button>`}
         </div>
       </td>
     </tr>`;
@@ -591,13 +593,14 @@ body {
   transition: all 0.15s;
   border: none;
 }
-.btn-apply { background: linear-gradient(135deg, #059669, #10b981); color: #fff; box-shadow: 0 2px 10px rgba(16, 185, 129, 0.3); }
-.btn-apply:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-copy-fix { background: linear-gradient(135deg, #0284c7, #0ea5e9); color: #fff; box-shadow: 0 2px 10px rgba(14, 165, 233, 0.3); display: inline-flex; align-items: center; gap: 6px; }
+.btn-copy-fix:hover { opacity: 0.92; transform: translateY(-1px); }
 .btn-inspect { background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-card); color: #e2e8f0; }
 .btn-inspect:hover { background: rgba(255, 255, 255, 0.16); }
 .btn-ignore { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-card); color: var(--text-muted); }
 .btn-ignore:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
-.auto-fix-hint { width: 100%; margin-top: 6px; font-size: 0.74em; color: #94a3b8; }
+.ai-guidance-card { width: 100%; margin-top: 10px; background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.25); border-radius: 8px; padding: 10px 14px; font-size: 0.76em; color: #bae6fd; line-height: 1.5; }
+.ai-guidance-card strong { color: #38bdf8; }
 .fix-concept-banner {
   margin-top: 14px;
   background: rgba(56, 189, 248, 0.08);
@@ -610,22 +613,154 @@ body {
   align-items: center;
   gap: 8px;
 }
-.btn-table-jump { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; border-radius: 6px; padding: 4px 10px; font-size: 0.82em; cursor: pointer; }
-.btn-table-jump:hover { background: rgba(56, 189, 248, 0.25); }
+.btn-table-jump { background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; border-radius: 6px; padding: 5px 12px; font-size: 0.82em; cursor: pointer; white-space: nowrap; font-family: inherit; transition: all 0.15s; }
+.btn-table-jump:hover { background: rgba(56, 189, 248, 0.25); transform: translateY(-1px); }
 
-/* ── Table ── */
-.table-wrap { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 14px; overflow: hidden; }
-.data-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.8em; }
-.data-table th { background: rgba(255, 255, 255, 0.03); color: var(--text-muted); padding: 12px 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-card); font-size: 0.82em; }
-.data-table td { padding: 12px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); vertical-align: middle; }
-.data-table tr:hover { background: rgba(255, 255, 255, 0.02); }
-.row-vuln-type { font-weight: 700; color: #fff; }
-.row-vuln-dev { font-size: 0.82em; color: var(--accent-cyan); }
-.row-file { font-family: 'Fira Code', monospace; color: #cbd5e1; }
-.row-line { font-size: 0.82em; color: var(--text-muted); }
-.row-date { font-size: 0.82em; color: var(--text-muted); }
-.btn-table-fix { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #34d399; border-radius: 6px; padding: 4px 10px; font-size: 0.82em; cursor: pointer; }
-.fixed-badge { color: #34d399; font-weight: 600; font-size: 0.82em; }
+/* ── Table & Tracker Responsiveness ── */
+.table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+.data-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.82em;
+}
+.data-table th {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  padding: 12px 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-card);
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: middle;
+}
+.data-table tr:hover td { background: rgba(255, 255, 255, 0.025); }
+.row-vuln-type { font-weight: 700; color: #fff; font-size: 0.95em; }
+.row-vuln-dev { font-size: 0.8em; color: var(--accent-cyan); margin-top: 1px; }
+.row-file {
+  font-family: 'Fira Code', monospace;
+  color: #cbd5e1;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-line { font-size: 0.8em; color: var(--text-muted); margin-top: 1px; }
+.row-date { font-size: 0.8em; color: var(--text-muted); white-space: nowrap; }
+.fixed-badge { color: #34d399; font-weight: 700; font-size: 0.82em; white-space: nowrap; }
+
+/* Tracker Controls */
+.tracker-header-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.tracker-title { font-size: 1.2em; font-weight: 800; color: #fff; letter-spacing: -0.2px; }
+.tracker-subtitle { font-size: 0.78em; color: var(--text-secondary); margin-top: 2px; }
+.tracker-count-badge {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  color: #38bdf8;
+  font-size: 0.75em;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 100px;
+}
+.tracker-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tracker-status-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-tfilter {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75em;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn-tfilter:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.btn-tfilter.active {
+  background: rgba(14, 165, 233, 0.2);
+  border-color: rgba(14, 165, 233, 0.45);
+  color: #38bdf8;
+}
+.tracker-search-wrap {
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  padding: 5px 12px;
+  min-width: 220px;
+  flex: 1;
+  max-width: 340px;
+}
+.tracker-search-input {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 0.78em;
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+  margin-left: 6px;
+}
+.tracker-search-input::placeholder { color: var(--text-muted); }
+.table-scroll-hint {
+  display: none;
+  font-size: 0.7em;
+  color: var(--text-muted);
+  text-align: right;
+  margin-bottom: 6px;
+}
+.btn-jump-tracker {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  color: #38bdf8;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 0.8em;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-jump-tracker:hover {
+  background: rgba(14, 165, 233, 0.25);
+  color: #fff;
+  transform: translateY(-1px);
+}
 
 /* ── Activity Stream ── */
 .activity-stream { display: flex; flex-direction: column; gap: 10px; }
@@ -655,6 +790,63 @@ body {
   border: 1px dashed var(--border-card);
   border-radius: 14px;
   font-size: 0.85em;
+}
+
+/* ── Responsive Media Queries for VS Code Window ── */
+@media (max-width: 860px) {
+  .top-nav {
+    height: auto;
+    min-height: 52px;
+    padding: 8px 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .brand-name { font-size: 1em; }
+  .app {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border-card);
+    padding: 6px 10px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nav-heading { display: none; }
+  .nav-btn {
+    width: auto;
+    white-space: nowrap;
+    padding: 7px 12px;
+    margin: 0;
+    flex-shrink: 0;
+    font-size: 0.78em;
+  }
+  .content {
+    padding: 14px 12px;
+  }
+  .table-scroll-hint {
+    display: block;
+  }
+  .tracker-search-wrap {
+    max-width: 100%;
+    width: 100%;
+  }
+}
+
+@media (max-width: 580px) {
+  .user-profile-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .progress-big-stat {
+    width: 100%;
+    justify-content: center;
+  }
+  .progress-metric-chips {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 </style>
 </head>
@@ -774,6 +966,12 @@ body {
             <span class="chip-label">Health Score</span>
           </div>
         </div>
+
+        <div style="margin-top: 16px; display: flex; justify-content: flex-end;">
+          <button class="btn-jump-tracker" onclick="showSection('tracker')">
+            <span>🗄️</span> Open DB Vulnerability Tracker (${dbRecords.length} records) &rarr;
+          </button>
+        </div>
       </div>
 
       <!-- Vulnerability Header & Filter Toolbar -->
@@ -798,27 +996,50 @@ body {
 
     <!-- ── TAB 2: DATABASE TRACKER ── -->
     <div class="section-content" id="section-tracker">
-      <div class="filter-toolbar">
+      <div class="tracker-header-wrap">
         <div>
-          <h2 style="font-size:1.1em;font-weight:800;color:#fff;">PostgreSQL Vulnerability Tracker</h2>
-          <div style="font-size:0.75em;color:var(--text-secondary);">Permanent record history stored in Neon DB for @${esc(devId)}</div>
+          <h2 class="tracker-title">🗄️ PostgreSQL Vulnerability Tracker</h2>
+          <div class="tracker-subtitle">Permanent real-time record history stored in Neon DB for @${esc(devId)}</div>
+        </div>
+        <div class="tracker-count-badge">
+          <span>${dbRecords.length} Total Records</span>
         </div>
       </div>
 
+      <!-- Tracker Filter & Search Controls -->
+      <div class="tracker-controls">
+        <div class="tracker-status-filters">
+          <button class="btn-tfilter active" onclick="filterTrackerStatus('ALL', this)">All (${dbRecords.length})</button>
+          <button class="btn-tfilter" onclick="filterTrackerStatus('OPEN', this)">⏳ Open (${openCount})</button>
+          <button class="btn-tfilter" onclick="filterTrackerStatus('FIXED', this)">✅ Fixed (${fixedCount})</button>
+          <button class="btn-tfilter" onclick="filterTrackerStatus('IGNORED', this)">⚪ Ignored (${ignoredCount})</button>
+        </div>
+        <div class="tracker-search-wrap">
+          <span style="font-size:0.85em;">🔍</span>
+          <input type="text" id="trackerSearch" class="tracker-search-input" placeholder="Search vulnerability, file, or line..." oninput="searchTracker(this.value)">
+        </div>
+      </div>
+
+      <!-- Mobile / Scroll Hint -->
+      <div class="table-scroll-hint">
+        <span>↔ Scroll table horizontally to view all columns</span>
+      </div>
+
+      <!-- Responsive Table Container -->
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table" id="trackerTable">
           <thead>
             <tr>
-              <th>Severity</th>
-              <th>Vulnerability</th>
-              <th>File &amp; Line</th>
-              <th>Status</th>
-              <th>Detected Date</th>
-              <th>Action</th>
+              <th style="width: 85px;">Severity</th>
+              <th style="min-width: 170px;">Vulnerability</th>
+              <th style="min-width: 180px;">File &amp; Line</th>
+              <th style="width: 120px;">Status</th>
+              <th style="width: 130px;">Detected Date</th>
+              <th style="width: 140px; text-align: right;">Action</th>
             </tr>
           </thead>
           <tbody>
-            ${dbRecordRows || `<tr><td colspan="6" style="text-align:center;padding:32px;">No historical database records for this user.</td></tr>`}
+            ${dbRecordRows || `<tr id="trackerEmptyRow"><td colspan="6" style="text-align:center;padding:36px;color:var(--text-muted);">No historical database records found.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -875,8 +1096,24 @@ function jumpToCode(fileName, line) {
   vscode.postMessage({ command: 'JUMP_TO_CODE', fileName, line });
 }
 
-function applyFix(findingId, fileName, line, fixedCode) {
-  vscode.postMessage({ command: 'APPLY_FIX', findingId, fileName, line, fixedCode });
+function copyAiFix(btn, code) {
+  if (!navigator.clipboard) {
+    const ta = document.createElement('textarea');
+    ta.value = code;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } else {
+    navigator.clipboard.writeText(code);
+  }
+  const orig = btn.innerHTML;
+  btn.innerHTML = '✅ Copied to Clipboard!';
+  btn.style.background = 'linear-gradient(135deg, #059669, #10b981)';
+  setTimeout(() => {
+    btn.innerHTML = orig;
+    btn.style.background = '';
+  }, 2200);
 }
 
 function markFixed(findingId) {
@@ -910,6 +1147,56 @@ function startShift(shiftId) {
 
 function endShift(shiftId, sessionId) {
   vscode.postMessage({ command: 'END_SHIFT', shiftId, sessionId });
+}
+
+// ── Client-side filtering & search for DB Vulnerability Tracker ──
+let currentTrackerStatus = 'ALL';
+let currentTrackerSearch = '';
+
+function filterTrackerStatus(status, btn) {
+  currentTrackerStatus = status;
+  document.querySelectorAll('.btn-tfilter').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  applyTrackerFilters();
+}
+
+function searchTracker(val) {
+  currentTrackerSearch = (val || '').toLowerCase().trim();
+  applyTrackerFilters();
+}
+
+function applyTrackerFilters() {
+  const rows = document.querySelectorAll('#trackerTable tbody tr.db-row');
+  let visibleCount = 0;
+  rows.forEach(row => {
+    const status = row.getAttribute('data-status') || '';
+    const searchText = (row.getAttribute('data-search') || row.innerText || '').toLowerCase();
+
+    const matchStatus = (currentTrackerStatus === 'ALL' || status === currentTrackerStatus);
+    const matchSearch = (!currentTrackerSearch || searchText.includes(currentTrackerSearch));
+
+    if (matchStatus && matchSearch) {
+      row.style.display = '';
+      visibleCount++;
+    } else {
+      row.style.display = 'none';
+    }
+  });
+
+  let emptyRow = document.getElementById('trackerEmptyRow');
+  if (visibleCount === 0) {
+    if (!emptyRow) {
+      emptyRow = document.createElement('tr');
+      emptyRow.id = 'trackerEmptyRow';
+      emptyRow.innerHTML = '<td colspan="6" style="text-align:center;padding:36px;color:var(--text-muted);">No matching vulnerability records found.</td>';
+      const tbody = document.querySelector('#trackerTable tbody');
+      if (tbody) tbody.appendChild(emptyRow);
+    } else {
+      emptyRow.style.display = '';
+    }
+  } else if (emptyRow) {
+    emptyRow.style.display = 'none';
+  }
 }
 </script>
 </body>
