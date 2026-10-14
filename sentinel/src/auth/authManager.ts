@@ -67,6 +67,7 @@ export interface GitHubUserProfile {
 }
 
 const SESSION_KEY = 'sentinel.authSession';
+const SIGNED_OUT_KEY = 'sentinel.signedOut';
 
 // GitHub OAuth scopes we need:
 //   read:user  → access profile (login, name, avatar)
@@ -105,11 +106,15 @@ export class AuthManager {
    */
   async loginWithGitHub(silent: boolean = false): Promise<AuthSession | null> {
     try {
-      const vsSession = await vscode.authentication.getSession(
-        'github',
-        GITHUB_SCOPES,
-        { silent, createIfNone: !silent },
-      );
+      // After an explicit sign-out, force a brand-new GitHub sign-in (browser prompt)
+      // instead of silently reusing the account VS Code remembers.
+      const signedOut = this.context.globalState.get<boolean>(SIGNED_OUT_KEY, false);
+      const options: vscode.AuthenticationGetSessionOptions = silent
+        ? { silent: true }
+        : signedOut
+          ? { forceNewSession: { detail: 'Sign in to Sentinel with your GitHub account.' } }
+          : { createIfNone: true };
+      const vsSession = await vscode.authentication.getSession('github', GITHUB_SCOPES, options);
 
       if (!vsSession) {
         return null; // User cancelled or silent refresh found nothing
@@ -138,6 +143,7 @@ export class AuthManager {
       };
 
       await this.context.workspaceState.update(SESSION_KEY, session);
+      await this.context.globalState.update(SIGNED_OUT_KEY, false);
 
       // Sync to Neon PostgreSQL
       void NeonDatabaseService.getInstance().upsertGitHubUser({
@@ -242,6 +248,10 @@ export class AuthManager {
    * Restores the active session without prompting if one already exists.
    */
   async refreshGitHubSession(): Promise<AuthSession | null> {
+    // Respect an explicit sign-out: never auto-restore until the user signs in again.
+    if (this.context.globalState.get<boolean>(SIGNED_OUT_KEY, false)) {
+      return null;
+    }
     return this.loginWithGitHub(true);
   }
 
@@ -277,6 +287,7 @@ export class AuthManager {
 
   logout(): void {
     void this.context.workspaceState.update(SESSION_KEY, undefined);
+    void this.context.globalState.update(SIGNED_OUT_KEY, true);
   }
 
   getSession(): AuthSession | undefined {
