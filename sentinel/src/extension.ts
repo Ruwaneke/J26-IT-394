@@ -21,6 +21,7 @@ import { DeveloperRecordStore } from './data/developerRecordStore.js';
 import { NeonDatabaseService } from './data/neonDatabaseService.js';
 import { AuthManager } from './auth/authManager.js';
 import { buildLoginHtml } from './webview/loginView.js';
+import { buildLoadingHtml } from './webview/loadingView.js';
 import { buildDeveloperDashboardHtml } from './webview/developerDashboard.js';
 import { buildSupervisorDashboardHtml, setDeveloperStats } from './webview/supervisorDashboard.js';
 import { buildAdminDashboardHtml } from './webview/adminDashboard.js';
@@ -530,6 +531,17 @@ class SentinelCodeActionProvider implements vscode.CodeActionProvider {
  * - If no session → show login screen.
  * - If session → route to the correct role dashboard.
  */
+let lastRenderedUser: string | null = null;
+
+function showLoadingScreen(title: string, subtitle: string): void {
+  if (!dashboardPanel) { return; }
+  const logoUri = dashboardPanel.webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'resources', 'sentinel-logo.png')
+  ).toString();
+  dashboardPanel.title = 'Sentinel — Loading';
+  dashboardPanel.webview.html = buildLoadingHtml(dashboardPanel.webview.cspSource, logoUri, title, subtitle);
+}
+
 async function refreshDashboard(): Promise<void> {
   if (!dashboardPanel) { return; }
 
@@ -541,9 +553,17 @@ async function refreshDashboard(): Promise<void> {
   const session   = authManager?.getSession();
 
   if (!session) {
+    lastRenderedUser = null;
     dashboardPanel.title = 'Sentinel — Login';
     dashboardPanel.webview.html = buildLoginHtml(cspSource, logoUri);
     return;
+  }
+
+  // First render after sign-in: show a proper loading screen while data loads from the DB
+  const userKey = `${session.userId}:${session.role}`;
+  if (lastRenderedUser !== userKey) {
+    showLoadingScreen('Loading your dashboard', 'Fetching your data from the database…');
+    lastRenderedUser = userKey;
   }
 
   const allFindings: SecurityFinding[] = [];
@@ -758,6 +778,7 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
     case 'GITHUB_LOGIN': {
       // Triggered when the user clicks "Continue with GitHub" in the webview.
       // This calls VS Code's OAuth flow — shows the system browser auth prompt.
+      showLoadingScreen('Signing in with GitHub', 'Complete the sign-in in your browser…');
       authManager.loginWithGitHub(false).then(session => {
         if (session) {
           log(`👋 GitHub login: @${session.githubUsername ?? session.username} (${session.role})`);
@@ -794,6 +815,7 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
     }
 
     case 'LOGIN': {
+      showLoadingScreen('Signing in', 'Verifying your credentials…');
       void (async () => {
         const session = await authManager.login(message.username as string, message.password as string);
         if (session) {
