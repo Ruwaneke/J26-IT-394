@@ -1,6 +1,8 @@
 # Local-only notes, never committed
 PLAN.md
 ml/VIVA_NOTES.md
+CODE_TOUR.md
+COMPAT_NOTES.md
 
 # Python
 ml/.venv/
@@ -16,7 +18,6 @@ ml/models/
 !ml/data/raw/.gitkeep
 !ml/data/processed/.gitkeep
 !ml/outputs/.gitkeep
-!ml/outputs/analytics.sample.json
 
 # Node
 node_modules/
