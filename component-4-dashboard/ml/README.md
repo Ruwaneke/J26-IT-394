@@ -18,25 +18,45 @@ On macOS/Linux use `python3.12 -m venv .venv` and `.venv/bin/python`.
 
 ## Run
 
+One command runs everything:
+
 ```bash
-.venv/Scripts/python -m src.simulate     # data/raw/events.jsonl, sessions.jsonl, developers.csv
-.venv/Scripts/python -m src.features     # data/processed/developer_weeks.csv
-.venv/Scripts/python -m src.trends       # developer_week_trends.csv, developer_trends.csv, team_weeks.csv
-.venv/Scripts/python -m src.forecast     # outputs/forecast_metrics.json, forecasts.json (see Forecasting)
-.venv/Scripts/python -m src.risk         # outputs/risk_metrics.json, risk.json (see Risk classification)
-.venv/Scripts/python -m pytest           # tests
+.venv/Scripts/python -m src.pipeline           # full run, about 5 minutes on CPU
+.venv/Scripts/python -m src.pipeline --quick   # smoke test, under 1 minute (quick forecast and risk settings)
+.venv/Scripts/python -m pytest                 # all tests
+```
+
+Each step can also be run on its own, in this order:
+
+```bash
+.venv/Scripts/python -m src.simulate      # data/raw/events.jsonl, sessions.jsonl, developers.csv
+.venv/Scripts/python -m src.features      # data/processed/developer_weeks.csv
+.venv/Scripts/python -m src.trends        # developer_week_trends.csv, developer_trends.csv, team_weeks.csv
+.venv/Scripts/python -m src.forecast      # outputs/forecast_metrics.json, forecasts.json
+.venv/Scripts/python -m src.risk          # outputs/risk_metrics.json, risk.json
+.venv/Scripts/python -m src.correlation   # outputs/correlations.json
+.venv/Scripts/python -m src.recommend     # outputs/recommendations.json
+.venv/Scripts/python -m src.export        # outputs/analytics.json + frontend/public/sample-analytics.json
 ```
 
 `python -m src.simulate --seed 7` overrides the seed. All other parameters are
 in `config.yaml`.
 
-## Pipeline so far
+## Pipeline
 
 | Step | Module | Output |
 |---|---|---|
 | Simulate events | `simulate.py` | `data/raw/events.jsonl`, `sessions.jsonl`, `developers.csv` |
 | Developer-week features | `features.py` | `data/processed/developer_weeks.csv` |
 | Trends | `trends.py` | `developer_week_trends.csv`, `developer_trends.csv`, `team_weeks.csv` |
+| Forecasting | `forecast.py` | `outputs/forecast_metrics.json`, `forecasts.json`, `forecast_tuning.csv` |
+| Risk classification | `risk.py` | `outputs/risk_metrics.json`, `risk.json`, `risk_tuning.csv` |
+| Correlation | `correlation.py` | `outputs/correlations.json` |
+| Recommendations | `recommend.py` | `outputs/recommendations.json` |
+| Export | `export.py` | `outputs/analytics.json` (the single contract file), `../frontend/public/sample-analytics.json` |
+
+Everything under `data/` and `outputs/` is generated and not committed. The
+only committed output is the 20-developer sample for the frontend.
 
 ### Features (one row per developer per week, weeks 1-16)
 
@@ -68,7 +88,7 @@ in `config.yaml`.
 
 ```bash
 .venv/Scripts/python -m src.forecast --quick   # smoke test: 1 seed, 20 epochs, default settings (~40 s)
-.venv/Scripts/python -m src.forecast           # full: grid search, 5 seeds, 4 variants (~4 min on CPU)
+.venv/Scripts/python -m src.forecast           # full: grid search, 5 seeds, 4 variants (~3 min on CPU)
 .venv/Scripts/python -m pytest tests/test_forecast.py tests/test_gru_numpy_matches_torch.py
 ```
 
@@ -166,15 +186,15 @@ have.
 
 ```bash
 .venv/Scripts/python -m src.risk --fit-thresholds   # once: prints train-percentile thresholds to freeze in config.yaml
-.venv/Scripts/python -m src.risk --quick            # smoke test: one grid point, 200 bootstrap resamples (~25 s)
-.venv/Scripts/python -m src.risk                    # full: 24-point grid, 2000 resamples (~3 min on CPU)
+.venv/Scripts/python -m src.risk --quick            # smoke test: one grid point, 2 CV repeats, 200 resamples (~30 s)
+.venv/Scripts/python -m src.risk                    # full: 24-point grid, 5 CV repeats, 2000 resamples (~1.5 min on CPU)
 .venv/Scripts/python -m pytest tests/test_risk.py
 ```
 
-Outputs (not committed): `outputs/risk.json` (per developer: band, class
-probabilities, top 3 factors, score history), `outputs/risk_metrics.json`
-(class balance, CV and test metrics, significance tests, feature importance,
-explanations) and `outputs/risk_tuning.csv`.
+Outputs (not committed):
+- `outputs/risk.json`: per developer, the band, class probabilities, measured drivers and score history.
+- `outputs/risk_metrics.json`: class balance, selection, the repeated-CV headline, significance tests, round-1 results and global importance.
+- `outputs/risk_tuning.csv`: every grid configuration with its CV score.
 
 The output is a **research risk profile based on measured behaviour**. It is
 not a judgment of the person.
@@ -189,83 +209,206 @@ is computed. The label uses weeks t+1..t+4 only, which is the developer's
 - The severity-weighted ignore rate is ignored severity weight / total severity
   weight (LOW=1, MEDIUM=2, HIGH=3).
 - The repeat rate is `repeat_count / vuln_count`.
-- Min-max constants come from the training developers only.
-- Bands use thresholds frozen in `config.yaml`: medium ≥ 0.3215 and
-  high ≥ 0.4660. These are the 40th and 80th percentiles of the
-  training-developer scores, chosen once.
-- No rows were dropped for having no detections in the label window.
+- The label is a fixed measuring instrument. Its min-max constants and its
+  band thresholds (medium ≥ 0.3215, high ≥ 0.4660, the 40th and 80th
+  percentiles) were set once in round 1 from the 48 round-1 training
+  developers.
+- No rows were dropped. Class balance over all 420 rows: 164 LOW / 174 MEDIUM /
+  82 HIGH.
 
-**Class balance.** Train (48 developers, 336 rows): 134 LOW / 135 MEDIUM / 67
-HIGH. Test (12 developers, 84 rows): 30 LOW / 39 MEDIUM / 15 HIGH.
+**Features.**
+- *Original set (30, round 1).* For fix rate, ignore rate, false-positive
+  rate, repeat rate, severity-weighted load, high-severity share, log response
+  time and weekly findings: the last-4-week value, the all-history value and
+  the 4-week slope. Also the per-type shares, active-week ratio and weeks since
+  first activity.
+- *Extended set (35, round 2, **added post-hoc** after round-1 results were
+  seen).* The original set plus the severity-weighted ignore rate (last 4,
+  all, slope) and the past risk score. The past score uses the label's exact
+  formula over weeks t-3..t and over all history. Its min-max constants come
+  from the training developers of each fold only.
+- No feature uses the archetype or any week after t.
 
-**Features (30).** For fix rate, ignore rate, false-positive rate, repeat rate,
-severity-weighted load, high-severity share, log response time and weekly
-findings, each row has three values: the last-4-week value, the all-history
-value and the 4-week slope. Rates are pooled (sum / sum). The remaining
-features are the per-type shares, the active-week ratio and weeks since first
-activity. There is no archetype field and no future data.
+**Selection.** The configuration is chosen by `GroupKFold(5)` CV on the 48
+round-1 training developers only. The grid is max_depth {2, 3, 4} ×
+n_estimators {100, 300} × learning_rate {0.05, 0.1} × min_child_weight {1, 5}
+for XGBoost, and C {0.1, 1, 10} for logistic regression. XGBoost uses
+balanced class weights, with early stopping on a 20% inner developer split.
+Selected: XGBoost depth 2, lr 0.1, mcw 1 (early stopping keeps ~17 trees);
+logistic regression C = 0.1.
 
-**Split.** 12 developers are held out as the final test set, stratified by
-simulated archetype (the archetype is used only for this split). The other 48
-are used for tuning with `GroupKFold(5)` by developer. Inside each training
-fold, 20% of developers are set aside for XGBoost early stopping. Tests check
-that no developer is in both train and test, that features ignore every week
-after t, and that labels ignore everything outside t+1..t+4.
+**Headline evaluation.** Repeated `GroupKFold` over all 60 developers (5
+repeats × 5 folds, developers shuffled differently each repeat). All rows of a
+developer stay in one fold. For each repeat, macro F1 is computed on the
+pooled out-of-fold predictions; the table shows mean ± std over repeats. The
+95% CI comes from a developer-level bootstrap (2000 resamples; a resampled
+developer brings all their rows). The main significance test is a **paired
+developer-level bootstrap** of the macro-F1 difference. McNemar is reported
+only as a secondary check, because rows from one developer are not
+independent.
 
-**Models.**
-- XGBoost (multiclass softprob, balanced class weights, early stopping). Grid:
-  max_depth {2, 3, 4} × n_estimators {100, 300} × learning_rate {0.05, 0.1} ×
-  min_child_weight {1, 5}, selected by CV macro F1.
-- Baselines:
-  - majority class;
-  - the proposal's static fix-rate rule on all-history fix rate (< 0.5 HIGH,
-    < 0.75 MEDIUM, else LOW);
-  - **persistence**: the same risk score on weeks t-3..t, banded with the
-    frozen thresholds;
-  - multinomial logistic regression on the same features (median imputation,
-    scaling, C tuned by CV).
+**Baselines.**
+- majority class;
+- the proposal's static fix-rate rule on all-history fix rate (< 0.5 HIGH,
+  < 0.75 MEDIUM, else LOW);
+- **persistence**: the label formula applied to weeks t-3..t, banded with the
+  frozen thresholds;
+- multinomial logistic regression on the same features.
 
-**Explanations.** Global gain importance and mean |SHAP| (TreeSHAP), plus the
-top 3 SHAP factors in plain words for each developer at t = 12 and at
-deployment.
+**Per-developer reasons.** The reasons shown to users ("drivers") are the
+developer's **own measured metrics** for the last 4 weeks, compared with the
+study median. For example: "Fix rate 27% in weeks 13-16 (below the study
+median of 57%)". For MEDIUM/HIGH, they are the metrics furthest on the worse
+side of the median, scaled by the IQR. For LOW, they are the metrics furthest
+on the better side. They are not model explanations. SHAP is used only for the
+global importance chart. Correlated features (for example the last-4 and
+all-history versions of one metric) share credit, so read it as which feature
+groups matter, not as causes.
 
-**Deployment.** The model is refit on all 60 developers with the
-early-stopped tree count (18 trees). Every developer is scored at week 16 for
-weeks 17-20.
+**Deployment.** The model is refit on all 60 developers with the early-stopped
+tree count. Every developer is scored at week 16 for weeks 17-20.
 
 ### Results (simulated data, seed 42)
 
-| Model | CV macro F1 (48 developers) | Test accuracy | Test macro precision | Test macro recall | Test macro F1 | Test HIGH recall |
-|---|---|---|---|---|---|---|
-| XGBoost (depth 4, lr 0.1, mcw 1; 18 trees) | 0.494 ± 0.148 | 0.393 | 0.406 | 0.374 | 0.369 | 0.333 |
-| Logistic regression (C = 0.1) | 0.490 ± 0.075 | 0.381 | 0.379 | 0.403 | 0.378 | 0.467 |
-| Persistence (last 4 weeks' score) | 0.447 ± 0.079 | **0.583** | **0.570** | **0.556** | **0.550** | **0.533** |
-| Fix-rate rule | 0.334 ± 0.085 | 0.274 | 0.191 | 0.292 | 0.215 | 0.467 |
-| Majority class | 0.150 ± 0.044 | 0.464 | 0.155 | 0.333 | 0.211 | 0.000 |
+**Headline: repeated grouped CV (extended features, all 60 developers).**
 
-XGBoost compared with each baseline on the held-out developers:
+| Model | Macro F1 mean ± std | 95% CI | Accuracy | HIGH recall |
+|---|---|---|---|---|
+| XGBoost | **0.521 ± 0.026** | [0.463, 0.567] | 0.521 | 0.661 |
+| Persistence | 0.508 ± 0.000 | [0.443, 0.559] | 0.517 | 0.415 |
+| Logistic regression | 0.468 ± 0.022 | [0.408, 0.526] | 0.465 | 0.563 |
+| Fix-rate rule | 0.323 ± 0.000 | [0.250, 0.397] | 0.383 | 0.622 |
+| Majority class | 0.215 ± 0.018 | [0.187, 0.240] | 0.355 | 0.000 |
 
-| Baseline | McNemar exact p | Bootstrap macro-F1 diff (XGB − baseline), 95% CI over developers |
+| XGBoost vs | Paired bootstrap macro-F1 diff, 95% CI | P(XGBoost better) | McNemar p (repeat 1, secondary) |
+|---|---|---|---|
+| Persistence | **+0.013 [−0.052, +0.074] → tie** | 0.66 | 0.26 |
+| Logistic regression | +0.052 [+0.007, +0.098] → beats | 0.99 | 0.005 |
+| Fix-rate rule | +0.197 [+0.127, +0.257] → beats | 1.00 | < 0.001 |
+| Majority class | +0.304 [+0.233, +0.370] → beats | 1.00 | < 0.001 |
+
+**XGBoost still does not beat persistence.** The difference is +0.013, with a
+CI that clearly includes 0, so I report it as a tie and did no further tuning.
+XGBoost catches more HIGH rows (recall 0.66 vs 0.42) but makes more errors
+elsewhere. The most important feature (mean |SHAP|) is `past_score_last4`,
+which is the persistence score itself. Recent behaviour is the strongest
+predictor.
+
+**Round 1 (already seen): the 12 held-out developers.**
+
+| Model | Macro F1, original features | Macro F1, extended features |
 |---|---|---|
-| Majority | 0.39 | +0.143 [−0.024, +0.319] |
-| Fix-rate rule | 0.031 | +0.142 [−0.002, +0.288] |
-| Persistence | 0.014 | **−0.171 [−0.340, −0.010]** |
-| Logistic regression | 1.00 | −0.008 [−0.138, +0.128] |
+| Persistence | **0.550** | **0.550** |
+| XGBoost | 0.369 | 0.414 |
+| Logistic regression | 0.378 | 0.376 |
+| Fix-rate rule | 0.215 | 0.215 |
+| Majority class | 0.211 | 0.211 |
 
-**Honest reading.** The **persistence baseline beats XGBoost** on the
-held-out developers. "The next 4 weeks look like the last 4" is the strongest
-predictor on this data. XGBoost is no better than logistic regression. It beats
-the fix-rate rule and the majority class on macro F1, but the CIs only just
-include 0. In cross-validation, XGBoost and persistence are within noise
-(0.494 ± 0.148 vs 0.447 ± 0.079), so with only 12 test developers the size of
-the test gap is uncertain. Its direction agrees with the forecasting result,
-though: recent behaviour carries most of the signal.
+These developers have been looked at twice, so the numbers are a record and
+not the headline. On these 12 developers, persistence won both times.
 
-XGBoost test confusion matrix (rows = true LOW/MEDIUM/HIGH, columns = predicted):
-`[[9, 10, 11], [5, 19, 15], [3, 7, 5]]`.
+## Correlation (Phase 4)
 
-Top features by mean |SHAP|: `fix_rate_last4`, `log_response_time_all`,
-`severity_weighted_load_all`, `fix_rate_all`, `share_command_injection`.
+`python -m src.correlation` writes `outputs/correlations.json`.
+
+- **Variables:** fix rate, ignore rate, repeat rate, average response time,
+  severity-weighted load, findings per week, false-positive rate.
+- **Main analysis: developer level.** Each developer's mean over their active
+  weeks, so n = 60. Using developer-weeks directly would count each developer
+  up to 16 times (pseudo-replication) and give p-values that are far too small.
+- **Secondary analysis: active developer-weeks,** with a repeated-measures
+  warning.
+- **Statistics:**
+  - Pearson r with a Fisher z CI.
+  - Spearman rho with a Fisher z CI, using se = sqrt(1.06 / (n − 3)).
+  - Benjamini-Hochberg correction across the 21 pairs, within each level and
+    method. Raw and adjusted p-values are both stored.
+  - Heatmap-ready matrices: r, adjusted p and a significance flag.
+
+**Developer-level results (simulated).** 10 of 21 pairs are significant after
+BH, and both methods agree on all 10:
+
+| Pair | Pearson r | Spearman rho |
+|---|---|---|
+| Severity-weighted load ~ findings per week | +1.00 | +1.00 |
+| Fix rate ~ ignore rate | −0.80 | −0.75 |
+| Fix rate ~ repeat rate | −0.49 | −0.53 |
+| Ignore rate ~ repeat rate | +0.48 | +0.49 |
+| Fix rate ~ findings per week | −0.47 | −0.49 |
+| Fix rate ~ severity-weighted load | −0.46 | −0.48 |
+| Repeat rate ~ findings per week | +0.46 | +0.39 |
+| Repeat rate ~ severity-weighted load | +0.46 | +0.39 |
+| Ignore rate ~ findings per week | +0.32 | +0.36 |
+| Ignore rate ~ severity-weighted load | +0.31 | +0.35 |
+
+Response time and false-positive rate are not significantly related to
+anything. Some pairs are related **by construction**, not by behaviour:
+- Fix and ignore rates are shares of the same findings.
+- Severity-weighted load is a weighted count of findings, so it is almost a
+  copy of findings per week.
+
+At developer-week level, 15 of 21 pairs look significant. That shows how
+pseudo-replication inflates significance.
+
+## Recommendations (Phase 4)
+
+`python -m src.recommend` writes `outputs/recommendations.json`.
+
+**How rules work.**
+- The rules live in `config.yaml` (`recommend.rules`).
+- Each rule has an id, a priority (1 = most urgent), a list of conditions
+  that must all hold, and a plain-language template.
+- Conditions are structured `{field, op, value}` data, never evaluated as
+  code. A condition on a missing value is false.
+
+**Inputs per developer:**
+- the risk band;
+- the forecast direction for findings and for fix rate: up, down or flat. The
+  weeks 17-18 forecast is compared with the developer's weeks 13-16 mean;
+  findings count as flat within ±max(15%, 0.5), fix rate within ±5 points;
+- the developer's own last-4-week ignore rate, fix rate, repeat rate and
+  response time;
+- the dominant vulnerability type.
+
+**Output per developer:** a priority, up to 3 recommendations and every rule
+id that fired. If no rule fires, the fallback rule R0 is used.
+
+| Rule | Priority | Fires when |
+|---|---|---|
+| R1 | 1 | band HIGH and ignore rate ≥ 30% |
+| R2 | 1 | band MEDIUM/HIGH and fix rate < 50% |
+| R3 | 2 | repeat rate ≥ 50% |
+| R4 | 2 | findings forecast to rise |
+| R5 | 2 | fix rate forecast to fall and band MEDIUM/HIGH |
+| R6 | 3 | average response time > 15 minutes |
+| R7 | 3 | band MEDIUM/HIGH and a dominant type exists (type-specific tip) |
+| R8 | 3 | band LOW and findings not forecast to rise |
+
+## Export and the contract file (Phase 4)
+
+`python -m src.export` writes `outputs/analytics.json`, the single file the
+dashboard reads, and validates it against `analytics.schema.json`. `tests/test_export.py`
+checks both the full file and the committed sample.
+
+**Sections:**
+- `meta`: `dataSource: "simulated"`, a disclaimer, the seed and when the file
+  was generated.
+- `overview`: KPIs.
+- `trends`: team weekly trends and per-developer trends.
+- `forecast`: history, test-period predicted vs actual, weeks 17-18 forecasts
+  and the seed band.
+- `forecastEvaluation`: all baselines, Wilcoxon tests, the residual variant
+  labelled post-hoc, and archetype MAE labelled diagnostic.
+- `risk`: band, probabilities, measured drivers and score history.
+- `riskEvaluation`: the headline repeated CV, significance tests, round 1 and
+  global importance with its caveat.
+- `correlations`: both levels, with heatmap matrices.
+- `recommendations`.
+- `keyFindings`: plain statements generated from the significance verdicts.
+
+`frontend/public/sample-analytics.json` has the same shape, cut to 20
+developers (about 225 KB). Its team-level and evaluation sections still cover
+all developers. It is committed so the frontend can run without the pipeline.
 
 ## Simulator assumptions
 
@@ -349,3 +492,20 @@ only for sanity checks and must never be a model input.
   does not model.
 - Developers are independent. There are no team or project effects.
 - `sessions.jsonl` is an optional input proposed to Component 2; it is not yet part of the Component 1/2 contract.
+- **Small sample.** There are 60 developers. Every CI over developers is wide,
+  and the round-1 held-out set had only 12.
+- **Post-hoc changes are labelled.** Two changes were made after earlier test
+  results were seen: the residual forecast mode and the extended classifier
+  features. Both were selected on validation or training CV only, but they
+  are still post-hoc.
+- **Label constants.** The risk label's min-max constants and thresholds were
+  set from the 48 round-1 training developers. In the repeated CV, some of
+  those developers fall in test folds. These are 6 fixed scalars that define
+  the label, not learned model parameters. Model features are always
+  normalised per fold.
+- **Correlation is not causation.** Several significant pairs exist by
+  construction (shares of the same findings; load is a weighted count).
+  Associations between developers do not show what drives an individual.
+- **Recommendation thresholds are design choices** (for example ignore rate
+  ≥ 30%), not fitted values. On real data, they should be reviewed with the
+  team.
