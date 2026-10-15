@@ -19,7 +19,8 @@ const ts = await compile(schema, "AnalyticsContract", {
 
 if (process.argv.includes("--check")) {
   const current = await readFile(outPath, "utf8").catch(() => "");
-  if (current !== ts) {
+  const lf = (s) => s.replace(/\r\n/g, "\n"); // git may check the file out with CRLF on Windows
+  if (lf(current) !== lf(ts)) {
     console.error("schema.generated.ts is out of date. Run: npm run gen:types");
     process.exit(1);
   }
