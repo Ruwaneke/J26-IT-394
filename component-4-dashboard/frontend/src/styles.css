@@ -1,0 +1,189 @@
+/* Colours come from VS Code theme variables when running in a webview.
+   The fallbacks are used in a normal browser (light or dark by system setting).
+   No external fonts: the VS Code UI font (or the system font) is used. */
+:root {
+  --c-bg: var(--vscode-editor-background, #ffffff);
+  --c-fg: var(--vscode-editor-foreground, #1f1f1f);
+  --c-muted: var(--vscode-descriptionForeground, #616161);
+  --c-border: var(--vscode-panel-border, var(--vscode-widget-border, #d4d4d4));
+  --c-grid: var(--vscode-editorWidget-border, #d0d0d0);
+  --c-card: var(--vscode-editorWidget-background, #f6f6f6);
+  --c-accent: var(--vscode-focusBorder, #0066b8);
+  --c-button-bg: var(--vscode-button-background, #0066b8);
+  --c-button-fg: var(--vscode-button-foreground, #ffffff);
+  --c-button-hover: var(--vscode-button-hoverBackground, #005499);
+  --c-input-bg: var(--vscode-dropdown-background, #ffffff);
+  --c-input-fg: var(--vscode-dropdown-foreground, #1f1f1f);
+  --c-input-border: var(--vscode-dropdown-border, #c8c8c8);
+  --c-blue: var(--vscode-charts-blue, #1a73e8);
+  --c-orange: var(--vscode-charts-orange, #d18616);
+  --c-green: var(--vscode-charts-green, #388a34);
+  --c-red: var(--vscode-charts-red, #d13438);
+  --c-purple: var(--vscode-charts-purple, #8a3fb8);
+  --c-yellow: var(--vscode-charts-yellow, #b89500);
+  --c-warn-bg: var(--vscode-inputValidation-warningBackground, #fff4ce);
+  --c-warn-border: var(--vscode-inputValidation-warningBorder, #b89500);
+  --c-error: var(--vscode-errorForeground, #d13438);
+  --font: var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --font-size: var(--vscode-font-size, 13px);
+  --mono: var(--vscode-editor-font-family, ui-monospace, Consolas, monospace);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: var(--vscode-editor-background, #1e1e1e);
+    --c-fg: var(--vscode-editor-foreground, #d4d4d4);
+    --c-muted: var(--vscode-descriptionForeground, #a0a0a0);
+    --c-border: var(--vscode-panel-border, var(--vscode-widget-border, #3c3c3c));
+    --c-grid: var(--vscode-editorWidget-border, #454545);
+    --c-card: var(--vscode-editorWidget-background, #252526);
+    --c-input-bg: var(--vscode-dropdown-background, #3c3c3c);
+    --c-input-fg: var(--vscode-dropdown-foreground, #f0f0f0);
+    --c-input-border: var(--vscode-dropdown-border, #555555);
+    --c-blue: var(--vscode-charts-blue, #3794ff);
+    --c-orange: var(--vscode-charts-orange, #d18616);
+    --c-green: var(--vscode-charts-green, #89d185);
+    --c-red: var(--vscode-charts-red, #f14c4c);
+    --c-purple: var(--vscode-charts-purple, #b180d7);
+    --c-yellow: var(--vscode-charts-yellow, #cca700);
+    --c-warn-bg: var(--vscode-inputValidation-warningBackground, #352a05);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--c-bg); color: var(--c-fg); font-family: var(--font); font-size: var(--font-size); }
+body { padding: 0; }
+code { font-family: var(--mono); font-size: 0.92em; }
+h1 { font-size: 1.4em; margin: 0; }
+h2 { font-size: 1.12em; margin: 0 0 6px; }
+h3 { font-size: 1em; margin: 18px 0 6px; }
+a { color: var(--vscode-textLink-foreground, var(--c-accent)); }
+
+.app { max-width: 1280px; margin: 0 auto; padding: 12px 16px 32px; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.header code { word-break: break-all; }
+.muted { color: var(--c-muted); }
+.small { font-size: 0.9em; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.button {
+  background: var(--c-button-bg); color: var(--c-button-fg); border: 1px solid transparent;
+  padding: 5px 12px; border-radius: 2px; cursor: pointer; font: inherit;
+}
+.button:hover:not(:disabled) { background: var(--c-button-hover); }
+.button:disabled { opacity: 0.6; cursor: default; }
+button:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 1px solid var(--c-accent); outline-offset: 2px; }
+
+.banner {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline;
+  border: 1px solid var(--c-warn-border); background: var(--c-warn-bg);
+  padding: 6px 10px; border-radius: 3px; margin-bottom: 8px;
+}
+.banner-real { border-color: var(--c-green); background: transparent; }
+.warning { border-left: 3px solid var(--c-warn-border); padding: 6px 10px; margin-bottom: 8px; background: var(--c-card); }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--c-border); margin-bottom: 12px; }
+.tab {
+  background: transparent; color: var(--c-muted); border: none; border-bottom: 2px solid transparent;
+  padding: 6px 10px; cursor: pointer; font: inherit;
+}
+.tab[aria-selected="true"] { color: var(--c-fg); border-bottom-color: var(--c-accent); }
+.tab:hover { color: var(--c-fg); }
+.panel:focus { outline: none; }
+
+.card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 4px; padding: 12px; margin-bottom: 12px; min-width: 0; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.kpi { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 4px; padding: 10px; }
+.kpi-value { font-size: 1.6em; font-weight: 600; }
+.kpi-label { color: var(--c-muted); }
+.finding-summary { border-left: 3px solid var(--c-accent); padding: 6px 10px; margin: 0 0 12px; }
+.chart { width: 100%; min-width: 0; }
+.plain { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 10px; }
+.picker { display: inline-flex; gap: 6px; align-items: center; }
+.picker select {
+  background: var(--c-input-bg); color: var(--c-input-fg); border: 1px solid var(--c-input-border);
+  padding: 3px 6px; font: inherit; border-radius: 2px;
+}
+.toggle { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.toggle-label { margin-right: 6px; color: var(--c-muted); }
+.toggle-button {
+  background: transparent; color: var(--c-fg); border: 1px solid var(--c-input-border);
+  padding: 3px 8px; cursor: pointer; font: inherit;
+}
+.toggle-button[aria-pressed="true"] { background: var(--c-button-bg); color: var(--c-button-fg); border-color: var(--c-button-bg); }
+
+.badge {
+  display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 0.85em; margin-left: 4px;
+  border: 1px solid var(--c-border); white-space: nowrap;
+}
+.band-low { border-color: var(--c-green); color: var(--c-green); }
+.band-medium { border-color: var(--c-yellow); color: var(--c-yellow); }
+.band-high { border-color: var(--c-red); color: var(--c-red); }
+.trend-improving { border-color: var(--c-green); color: var(--c-green); }
+.trend-worsening { border-color: var(--c-red); color: var(--c-red); }
+.verdict-beats { border-color: var(--c-green); color: var(--c-green); }
+.verdict-worse { border-color: var(--c-red); color: var(--c-red); }
+.priority-1 { border-color: var(--c-red); color: var(--c-red); }
+.priority-2 { border-color: var(--c-yellow); color: var(--c-yellow); }
+
+.table-wrap { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95em; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--c-border); vertical-align: top; }
+thead th { color: var(--c-muted); font-weight: 600; white-space: nowrap; }
+tbody th { font-weight: 600; white-space: nowrap; }
+.row-highlight { background: color-mix(in srgb, var(--c-accent) 10%, transparent); }
+.sort { background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.reasons { margin: 0; padding-left: 16px; }
+.reason-worse::marker { color: var(--c-red); }
+.reason-better::marker { color: var(--c-green); }
+
+.heatmap { width: auto; border-collapse: separate; border-spacing: 2px; }
+.heatmap th { font-size: 0.85em; }
+.heat-col { max-width: 90px; white-space: normal; text-align: center; }
+.heat-cell { min-width: 74px; text-align: center; border: 1px solid transparent; border-radius: 2px; }
+.heat-sig { border: 2px solid var(--c-fg); }
+.heat-diag { color: var(--c-muted); }
+.heat-r { font-weight: 600; }
+.heat-p { font-size: 0.8em; color: var(--c-muted); }
+
+.rec-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.rec { border: 1px solid var(--c-border); border-left-width: 3px; border-radius: 3px; padding: 8px 10px; }
+.rec-p1 { border-left-color: var(--c-red); }
+.rec-p2 { border-left-color: var(--c-yellow); }
+.rec-p3 { border-left-color: var(--c-green); }
+.rec-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rec ol { margin: 6px 0 0; padding-left: 20px; }
+.rules code { margin-left: 4px; }
+
+.findings { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.finding { border-left: 3px solid var(--c-border); padding: 4px 8px; }
+.finding-summary .badge, .finding.finding-summary { border-left-color: var(--c-accent); }
+
+.state { padding: 24px; text-align: center; }
+.state-error { color: var(--c-error); }
+.spinner {
+  display: inline-block; width: 12px; height: 12px; border: 2px solid var(--c-muted); border-top-color: transparent;
+  border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+@media (max-width: 520px) {
+  .app { padding: 8px; }
+  .kpi-value { font-size: 1.3em; }
+  .tab { padding: 6px 7px; }
+}
+
+/* Narrow panels: the risk table becomes stacked rows so the reasons stay visible
+   (use the band filter; column sorting is available at wider widths). */
+@media (max-width: 640px) {
+  .risk-table thead { display: none; }
+  .risk-table, .risk-table tbody, .risk-table tr { display: block; }
+  .risk-table tr { border-bottom: 1px solid var(--c-border); padding: 6px 0; }
+  .risk-table th, .risk-table td { display: inline-block; border: none; padding: 2px 8px 2px 0; }
+  .risk-table td[data-label]::before { content: attr(data-label) " "; color: var(--c-muted); }
+  .risk-table td.reasons-cell { display: block; }
+}

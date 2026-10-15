@@ -21,6 +21,7 @@ ml/models/
 
 # Node
 node_modules/
+frontend/public/analytics.json
 frontend/dist/
 extension/out/
 extension/media/

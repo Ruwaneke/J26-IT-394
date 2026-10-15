@@ -1,0 +1,33 @@
+{
+  "name": "sentinel-analytics-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Component 4 analytics dashboard (React + Recharts). Runs inside the VS Code webview or standalone in a browser.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "watch": "vite build --watch --mode development",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "gen:types": "node scripts/gen-types.mjs",
+    "check:types": "node scripts/gen-types.mjs --check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "ajv": "^8.20.0",
+    "json-schema-to-typescript": "^16.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
