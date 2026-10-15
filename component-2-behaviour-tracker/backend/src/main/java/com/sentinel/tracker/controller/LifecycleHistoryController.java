@@ -11,14 +11,14 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/lifecycle-history")
+@RequestMapping({"/api/lifecycle", "/api/lifecycle-history"})
 @RequiredArgsConstructor
 @Tag(name = "Lifecycle History", description = "Vulnerability lifecycle history endpoints")
 public class LifecycleHistoryController {
 
     private final VulnerabilityLifecycleHistoryService lifecycleHistoryService;
 
-    @GetMapping("/security-event/{securityEventId}")
+    @GetMapping({"/security-event/{securityEventId}", "/{securityEventId}"})
     @Operation(summary = "Get the full lifecycle history for a security event")
     public ResponseEntity<List<LifecycleHistoryResponse>> getHistoryBySecurityEvent(
             @PathVariable Long securityEventId) {

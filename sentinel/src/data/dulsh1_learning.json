@@ -1,0 +1,27 @@
+{
+  "developerId": "dulsh1",
+  "createdAt": "2026-10-14T16:10:47.699Z",
+  "updatedAt": "2026-10-14T16:15:45.757Z",
+  "vulnLearning": {
+    "SQL_INJECTION": {
+      "totalDetections": 1,
+      "totalFixes": 1,
+      "totalIgnored": 1,
+      "totalFalsePositives": 0,
+      "ruleAdjustments": {
+        "SENTINEL-SQL-001": {
+          "fixedCount": 1,
+          "ignoredCount": 1,
+          "falsePositiveCount": 0,
+          "adjustedConfidence": 0.81,
+          "lastUpdatedAt": "2026-10-14T16:15:45.757Z"
+        }
+      },
+      "suppressed": false,
+      "firstSeenAt": "2026-10-14T16:10:47.699Z",
+      "lastSeenAt": "2026-10-14T16:15:45.757Z"
+    }
+  },
+  "suppressedRules": {},
+  "falsePositiveSnippetHashes": []
+}

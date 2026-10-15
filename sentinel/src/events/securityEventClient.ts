@@ -27,6 +27,7 @@ const ACTION_MAP: Record<DeveloperAction, BackendAction | null> = {
   [DeveloperAction.IGNORED]:               'IGNORE',
   [DeveloperAction.MARKED_FALSE_POSITIVE]: 'IGNORE',
   [DeveloperAction.DISMISSED]:             'DISMISS',
+  [DeveloperAction.REOPEN]:                'REOPEN',
 };
 
 const MAX_RETRIES = 3;

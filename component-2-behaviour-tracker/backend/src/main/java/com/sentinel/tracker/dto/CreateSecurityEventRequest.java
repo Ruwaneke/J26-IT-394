@@ -39,5 +39,14 @@ public class CreateSecurityEventRequest {
     /**
      * When the event was detected. Defaults to now if not provided.
      */
+    @com.fasterxml.jackson.annotation.JsonAlias("timestamp")
     private LocalDateTime detectedAt;
+
+    public LocalDateTime getTimestamp() {
+        return this.detectedAt;
+    }
+
+    public void setTimestamp(LocalDateTime timestamp) {
+        this.detectedAt = timestamp;
+    }
 }

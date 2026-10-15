@@ -2,21 +2,20 @@ package com.sentinel.tracker.service;
 
 import com.sentinel.tracker.dto.BehaviourLogResponse;
 import com.sentinel.tracker.dto.CreateBehaviourLogRequest;
+import com.sentinel.tracker.dto.CreateDeveloperInteractionRequest;
+import com.sentinel.tracker.dto.DeveloperInteractionResponse;
 import com.sentinel.tracker.entity.BehaviourLog;
 import com.sentinel.tracker.entity.Developer;
 import com.sentinel.tracker.entity.SecurityEvent;
 import com.sentinel.tracker.enums.BehaviourAction;
-import com.sentinel.tracker.enums.SecurityEventStatus;
-import com.sentinel.tracker.enums.Severity;
 import com.sentinel.tracker.exception.ResourceNotFoundException;
 import com.sentinel.tracker.repository.BehaviourLogRepository;
 import com.sentinel.tracker.repository.DeveloperRepository;
-import com.sentinel.tracker.repository.SecurityEventRepository;
 import com.sentinel.tracker.service.impl.BehaviourLogServiceImpl;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,77 +40,66 @@ class BehaviourLogServiceTest {
     private DeveloperRepository developerRepository;
 
     @Mock
-    private SecurityEventRepository securityEventRepository;
+    private DeveloperInteractionService developerInteractionService;
 
     @InjectMocks
     private BehaviourLogServiceImpl behaviourLogService;
 
-    private Developer developer;
-    private SecurityEvent securityEvent;
-    private BehaviourLog behaviourLog;
-
-    @BeforeEach
-    void setUp() {
-        developer = Developer.builder()
-                .id(1L)
-                .developerIdentifier("dev-001")
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-
-        securityEvent = SecurityEvent.builder()
-                .id(10L)
-                .developer(developer)
-                .vulnerabilityType("SQL_INJECTION")
-                .severity(Severity.HIGH)
-                .fileName("UserService.java")
-                .lineNumber(42)
-                .message("SQL injection")
-                .detectedAt(LocalDateTime.now())
-                .currentStatus(SecurityEventStatus.DETECTED)
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-
-        behaviourLog = BehaviourLog.builder()
-                .id(100L)
-                .developer(developer)
-                .securityEvent(securityEvent)
-                .actionType(BehaviourAction.OPEN)
-                .timestamp(LocalDateTime.now())
-                .createdAt(LocalDateTime.now())
-                .build();
-    }
-
     @Test
-    @DisplayName("createBehaviourLog – should create log with valid developer and security event")
-    void createBehaviourLog_shouldCreateSuccessfully() {
+    @DisplayName("createBehaviourLog – should delegate to DeveloperInteractionService with mapped fields")
+    void createBehaviourLog_delegatesToInteractionService() {
+        LocalDateTime timestamp = LocalDateTime.of(2026, 10, 8, 10, 0);
         CreateBehaviourLogRequest request = new CreateBehaviourLogRequest();
         request.setDeveloperId(1L);
         request.setSecurityEventId(10L);
         request.setActionType(BehaviourAction.OPEN);
+        request.setTimestamp(timestamp);
+        request.setContextMetadata("{\"ide\":\"vscode\"}");
 
-        when(developerRepository.findById(1L)).thenReturn(Optional.of(developer));
-        when(securityEventRepository.findById(10L)).thenReturn(Optional.of(securityEvent));
-        when(behaviourLogRepository.save(any(BehaviourLog.class))).thenReturn(behaviourLog);
+        when(developerInteractionService.createInteraction(any())).thenReturn(
+                DeveloperInteractionResponse.builder()
+                        .id(100L)
+                        .developerId(1L)
+                        .securityEventId(10L)
+                        .action(BehaviourAction.OPEN)
+                        .actionTimestamp(timestamp)
+                        .timeSinceDetectionSeconds(42L)
+                        .metadata("{\"ide\":\"vscode\"}")
+                        .build());
 
         BehaviourLogResponse response = behaviourLogService.createBehaviourLog(request);
 
-        assertThat(response).isNotNull();
+        ArgumentCaptor<CreateDeveloperInteractionRequest> captor =
+                ArgumentCaptor.forClass(CreateDeveloperInteractionRequest.class);
+        verify(developerInteractionService).createInteraction(captor.capture());
+        CreateDeveloperInteractionRequest delegated = captor.getValue();
+        assertThat(delegated.getDeveloperId()).isEqualTo(1L);
+        assertThat(delegated.getSecurityEventId()).isEqualTo(10L);
+        assertThat(delegated.getAction()).isEqualTo(BehaviourAction.OPEN);
+        assertThat(delegated.getActionTimestamp()).isEqualTo(timestamp);
+        assertThat(delegated.getMetadata()).isEqualTo("{\"ide\":\"vscode\"}");
+
         assertThat(response.getId()).isEqualTo(100L);
         assertThat(response.getActionType()).isEqualTo(BehaviourAction.OPEN);
         assertThat(response.getDeveloperId()).isEqualTo(1L);
         assertThat(response.getSecurityEventId()).isEqualTo(10L);
+        assertThat(response.getTimestamp()).isEqualTo(timestamp);
+        assertThat(response.getContextMetadata()).isEqualTo("{\"ide\":\"vscode\"}");
+
+        // No direct write path left in this service
+        verify(behaviourLogRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("createBehaviourLog – should throw when developer not found")
+    @DisplayName("createBehaviourLog – should propagate not-found errors from the interaction service")
     void createBehaviourLog_shouldThrowWhenDeveloperNotFound() {
         CreateBehaviourLogRequest request = new CreateBehaviourLogRequest();
         request.setDeveloperId(999L);
+        request.setSecurityEventId(10L);
         request.setActionType(BehaviourAction.IGNORE);
 
-        when(developerRepository.findById(999L)).thenReturn(Optional.empty());
+        when(developerInteractionService.createInteraction(any()))
+                .thenThrow(new ResourceNotFoundException("Developer", "id", 999L));
 
         assertThatThrownBy(() -> behaviourLogService.createBehaviourLog(request))
                 .isInstanceOf(ResourceNotFoundException.class)
@@ -121,28 +109,26 @@ class BehaviourLogServiceTest {
     }
 
     @Test
-    @DisplayName("createBehaviourLog – should create log without security event")
-    void createBehaviourLog_shouldCreateWithoutSecurityEvent() {
-        CreateBehaviourLogRequest request = new CreateBehaviourLogRequest();
-        request.setDeveloperId(1L);
-        request.setActionType(BehaviourAction.FIX);
-        // securityEventId is intentionally null
-
-        BehaviourLog logWithoutEvent = BehaviourLog.builder()
-                .id(101L)
+    @DisplayName("getBehaviourLogById – should still return the legacy representation")
+    void getBehaviourLogById_returnsLegacyResponse() {
+        Developer developer = Developer.builder().id(1L).developerIdentifier("dev-001").build();
+        SecurityEvent event = SecurityEvent.builder().id(10L).developer(developer).build();
+        BehaviourLog log = BehaviourLog.builder()
+                .id(100L)
                 .developer(developer)
-                .securityEvent(null)
+                .securityEvent(event)
                 .actionType(BehaviourAction.FIX)
                 .timestamp(LocalDateTime.now())
-                .createdAt(LocalDateTime.now())
+                .contextMetadata("meta")
                 .build();
 
-        when(developerRepository.findById(1L)).thenReturn(Optional.of(developer));
-        when(behaviourLogRepository.save(any(BehaviourLog.class))).thenReturn(logWithoutEvent);
+        when(behaviourLogRepository.findById(100L)).thenReturn(Optional.of(log));
 
-        BehaviourLogResponse response = behaviourLogService.createBehaviourLog(request);
+        BehaviourLogResponse response = behaviourLogService.getBehaviourLogById(100L);
 
-        assertThat(response.getSecurityEventId()).isNull();
+        assertThat(response.getId()).isEqualTo(100L);
         assertThat(response.getActionType()).isEqualTo(BehaviourAction.FIX);
+        assertThat(response.getSecurityEventId()).isEqualTo(10L);
+        assertThat(response.getContextMetadata()).isEqualTo("meta");
     }
 }

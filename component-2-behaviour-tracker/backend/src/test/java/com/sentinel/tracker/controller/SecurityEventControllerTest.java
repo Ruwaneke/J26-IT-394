@@ -156,6 +156,97 @@ class SecurityEventControllerTest {
     }
 
     @Test
+    @DisplayName("POST /api/security-events – 400 when lineNumber is omitted (no silent default to 0)")
+    void createSecurityEvent_shouldReturn400WhenLineNumberMissing() throws Exception {
+        String json = """
+                {
+                  "developerId": 10,
+                  "vulnerabilityType": "SQL_INJECTION",
+                  "severity": "HIGH",
+                  "fileName": "UserService.java",
+                  "message": "Possible SQL injection"
+                }
+                """;
+
+        mockMvc.perform(post("/api/security-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message", containsString("lineNumber must not be null")));
+
+        verifyNoInteractions(securityEventService);
+    }
+
+    @Test
+    @DisplayName("POST /api/security-events – 400 when lineNumber is explicitly null")
+    void createSecurityEvent_shouldReturn400WhenLineNumberNull() throws Exception {
+        CreateSecurityEventRequest request = buildValidRequest();
+        request.setLineNumber(null);
+
+        mockMvc.perform(post("/api/security-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("lineNumber must not be null")));
+
+        verifyNoInteractions(securityEventService);
+    }
+
+    @Test
+    @DisplayName("POST /api/security-events – 400 with message when lineNumber is negative")
+    void createSecurityEvent_shouldReturn400WithMessageWhenLineNumberNegative() throws Exception {
+        CreateSecurityEventRequest request = buildValidRequest();
+        request.setLineNumber(-5);
+
+        mockMvc.perform(post("/api/security-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("lineNumber must be zero or positive")));
+
+        verifyNoInteractions(securityEventService);
+    }
+
+    @Test
+    @DisplayName("POST /api/security-events – 400 when lineNumber is not a number")
+    void createSecurityEvent_shouldReturn400WhenLineNumberNotNumeric() throws Exception {
+        String json = """
+                {
+                  "developerId": 10,
+                  "vulnerabilityType": "SQL_INJECTION",
+                  "severity": "HIGH",
+                  "fileName": "UserService.java",
+                  "lineNumber": "forty-five",
+                  "message": "Possible SQL injection"
+                }
+                """;
+
+        mockMvc.perform(post("/api/security-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+
+        verifyNoInteractions(securityEventService);
+    }
+
+    @Test
+    @DisplayName("POST /api/security-events – 201 when lineNumber is 0 (boundary)")
+    void createSecurityEvent_shouldAcceptLineNumberZero() throws Exception {
+        CreateSecurityEventRequest request = buildValidRequest();
+        request.setLineNumber(0);
+
+        when(securityEventService.createSecurityEvent(any(CreateSecurityEventRequest.class)))
+                .thenReturn(sampleResponse);
+
+        mockMvc.perform(post("/api/security-events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     @DisplayName("POST /api/security-events – 400 when severity is null")
     void createSecurityEvent_shouldReturn400WhenSeverityNull() throws Exception {
         // Send raw JSON with severity omitted (null)

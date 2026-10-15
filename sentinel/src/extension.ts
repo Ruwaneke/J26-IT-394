@@ -405,8 +405,8 @@ function handleFixAction(findingId: string): void {
     panel.webview.html = buildFixHtml(finding, meta);
   }
 
-  void eventClient.reportAction(finding, DeveloperAction.SECURE_EXAMPLE_VIEWED);
-  log(`[Action] SECURE_EXAMPLE_VIEWED — ${finding.type} at line ${finding.lineNumber}`);
+  void eventClient.reportAction(finding, DeveloperAction.FIX_APPLIED);
+  log(`[Action] FIX_APPLIED — ${finding.type} at line ${finding.lineNumber}`);
 
   // ── Learning feedback: developer viewed the fix (treat as intent to fix) ──
   resolveDeveloperId().then(developerId => {
