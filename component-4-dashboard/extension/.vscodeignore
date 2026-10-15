@@ -1,0 +1,8 @@
+src/**
+scripts/**
+node_modules/**
+.vscode/**
+tsconfig.json
+out/**/*.map
+media/index.html
+**/*.vsix

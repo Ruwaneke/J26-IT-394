@@ -1,0 +1,68 @@
+{
+  "name": "sentinel-analytics",
+  "displayName": "Sentinel Analytics",
+  "description": "Component 4 research dashboard for the Sentinel project: trends, forecasts, risk profiles, correlations and recommendations from analytics.json (simulated data until Component 2 is ready).",
+  "version": "0.1.0",
+  "publisher": "sentinel-research",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sentinelAnalytics.openDashboard",
+        "title": "Open Dashboard",
+        "category": "Sentinel Analytics",
+        "icon": "$(graph)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "sentinelAnalytics.openDashboard",
+          "when": "resourceFilename == analytics.json || resourceFilename == sample-analytics.json",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Sentinel Analytics",
+      "properties": {
+        "sentinelAnalytics.dataPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `analytics.json` written by the Component 4 pipeline (`python -m src.pipeline`). Absolute, or relative to the first workspace folder, e.g. `component-4-dashboard/ml/outputs/analytics.json`. Leave empty to use the bundled 20-developer sample."
+        },
+        "sentinelAnalytics.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a Sentinel Analytics entry in the status bar."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:webview": "npm --prefix ../frontend run build",
+    "build:extension": "tsc --noEmit -p . && node scripts/build.mjs",
+    "build": "npm run build:webview && npm run build:extension",
+    "watch": "node scripts/watch.mjs",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --skip-license",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
