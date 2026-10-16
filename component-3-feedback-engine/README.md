@@ -19,3 +19,6 @@ The current prototype includes mock security-event and behaviour-history
 models, severity scoring, and behaviour-aware feedback escalation. Repeated
 ignored warnings increase feedback severity, while consistent fixes reduce
 severity without crossing the `INFO` or `CRITICAL` boundaries.
+
+It also provides secure-coding recommendation templates for each supported
+vulnerability category, including practical guidance and secure examples.
