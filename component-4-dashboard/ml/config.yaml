@@ -194,6 +194,12 @@ recommend:
     text: "No specific rule applies this period. Keep reviewing findings as they appear."
   output: outputs/recommendations.json
 
+report:
+  markdown: outputs/research_summary.md
+  html: outputs/research_summary.html
+  figures: outputs/figures
+  dpi: 200
+
 export:
   output: outputs/analytics.json
   schema: analytics.schema.json

@@ -1,6 +1,6 @@
 """Run the whole Component 4 pipeline in order (simulated data).
 
-simulate -> features -> trends -> forecast -> risk -> correlation -> recommend -> export
+simulate -> features -> trends -> forecast -> risk -> correlation -> recommend -> export -> report
 
 Each step reads the previous steps' files (paths in config.yaml), so any step
 can also be run on its own with `python -m src.<step>`. When Component 2 is
@@ -11,7 +11,7 @@ unchanged.
 import argparse
 import time
 
-from . import correlation, export, features, forecast, recommend, risk, simulate, trends
+from . import correlation, export, features, forecast, recommend, report, risk, simulate, trends
 
 
 def run(quick=False):
@@ -24,6 +24,7 @@ def run(quick=False):
         ("correlation", correlation.run),
         ("recommend", recommend.run),
         ("export", export.run),
+        ("report", report.run),
     ]
     start = time.time()
     for i, (name, step) in enumerate(steps, start=1):
@@ -35,7 +36,7 @@ def run(quick=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run simulate -> ... -> export (simulated data).")
+    parser = argparse.ArgumentParser(description="Run simulate -> ... -> export -> report (simulated data).")
     parser.add_argument("--quick", action="store_true", help="quick forecast and risk settings for a smoke test")
     run(quick=parser.parse_args().quick)
 
