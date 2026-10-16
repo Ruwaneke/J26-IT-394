@@ -37,6 +37,7 @@ Each step can also be run on its own, in this order:
 .venv/Scripts/python -m src.correlation   # outputs/correlations.json
 .venv/Scripts/python -m src.recommend     # outputs/recommendations.json
 .venv/Scripts/python -m src.export        # outputs/analytics.json + frontend/public/sample-analytics.json
+.venv/Scripts/python -m src.report        # outputs/research_summary.md/.html + outputs/figures/*.png
 ```
 
 `python -m src.simulate --seed 7` overrides the seed. All other parameters are
@@ -54,6 +55,7 @@ in `config.yaml`.
 | Correlation | `correlation.py` | `outputs/correlations.json` |
 | Recommendations | `recommend.py` | `outputs/recommendations.json` |
 | Export | `export.py` | `outputs/analytics.json` (the single contract file), `../frontend/public/sample-analytics.json` |
+| Report | `report.py` | `outputs/research_summary.md`, `research_summary.html`, `figures/*.png` |
 
 Everything under `data/` and `outputs/` is generated and not committed. The
 only committed output is the 20-developer sample for the frontend.
@@ -409,6 +411,25 @@ checks both the full file and the committed sample.
 `frontend/public/sample-analytics.json` has the same shape, cut to 20
 developers (about 225 KB). Its team-level and evaluation sections still cover
 all developers. It is committed so the frontend can run without the pipeline.
+
+## Research summary report (Phase 6)
+
+`python -m src.report` (also the last pipeline step) reads `outputs/analytics.json`
+and writes `outputs/research_summary.md` and `outputs/research_summary.html`. It
+saves its figures in `outputs/figures/` (PNG, 200 dpi, greyscale with hatching, labelled axes and units).
+
+**Contents:** purpose and scope; data (the simulator assumptions); methods;
+results tables (forecasting metrics and Wilcoxon verdicts, classification
+repeated-CV macro F1 with CIs and bootstrap verdicts, significant correlations
+with by-construction pairs marked); key findings; limitations; future work.
+
+Every comparison sentence is generated from the verdicts in the JSON, using
+the same rules as `export.py`. `tests/test_report.py` checks four things:
+- the disclaimer is present;
+- every verdict appears in the tables;
+- no sentence says the GRU or XGBoost "beats" a baseline that the JSON marks
+  as a tie (the checker is also tested against planted overclaims);
+- the summary finding changes if the numbers change.
 
 ## Simulator assumptions
 
