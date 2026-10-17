@@ -611,6 +611,10 @@ on the `feature/analytics` branch.
 
 **The C1 → C2 contract is frozen.** Changes go into C2, not into the extension's calls.
 
+The full integration guide is in
+[docs/architecture/INTEGRATION.md](docs/architecture/INTEGRATION.md). It covers every
+interface, mismatch, mapping, open decision and the roadmap.
+
 ### `SecurityFinding` (C1)
 
 ```typescript
