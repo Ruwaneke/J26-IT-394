@@ -1001,8 +1001,13 @@ body {
           <h2 class="tracker-title">🗄️ PostgreSQL Vulnerability Tracker</h2>
           <div class="tracker-subtitle">Permanent real-time record history stored in Neon DB for @${esc(devId)}</div>
         </div>
-        <div class="tracker-count-badge">
-          <span>${dbRecords.length} Total Records</span>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn-action" style="padding:6px 14px;font-size:0.8em;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:700;display:flex;align-items:center;gap:6px;" onclick="scanWorkspace()">
+            <span>⚡</span> Scan Workspace &amp; Sync DB
+          </button>
+          <div class="tracker-count-badge">
+            <span>${dbRecords.length} Total Records</span>
+          </div>
         </div>
       </div>
 
@@ -1126,6 +1131,10 @@ function ignoreFinding(findingId) {
 
 function doLogout() {
   vscode.postMessage({ command: 'LOGOUT' });
+}
+
+function scanWorkspace() {
+  vscode.postMessage({ command: 'SCAN_WORKSPACE' });
 }
 
 function filterCards(sev) {

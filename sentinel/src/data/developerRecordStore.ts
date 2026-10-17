@@ -126,17 +126,18 @@ export class DeveloperRecordStore {
     const record = this.buildRecord(finding, developerId, githubUsername, sessionId);
 
     try {
-      this.savedFindingIds.add(finding.id);
-
       // Persist to Neon PostgreSQL with full contextual explanation & status
       const explanation = generateContextualExplanation(finding);
-      void NeonDatabaseService.getInstance().saveVulnerabilityRecord(
+      const saved = await NeonDatabaseService.getInstance().saveVulnerabilityRecord(
         finding,
         developerId,
         githubUsername,
         sessionId,
         explanation
       );
+      if (saved) {
+        this.savedFindingIds.add(finding.id);
+      }
     } catch (err) {
       // Never let a write error crash the extension
       console.error('[Sentinel] DeveloperRecordStore: Failed to save record:', err);

@@ -93,6 +93,12 @@ export function activate(context: vscode.ExtensionContext): void {
   neonDb.initialize().then(ok => {
     if (ok) {
       log('⚡ Connected to Neon PostgreSQL database.');
+      // Re-analyze open documents now that DB is guaranteed online
+      vscode.workspace.textDocuments.forEach(doc => {
+        if (doc.uri.scheme === 'file') {
+          void analyzeDocument(doc, false);
+        }
+      });
       void refreshDashboard();
     } else {
       log('⚠️ Neon PostgreSQL offline, using local storage mode.');
@@ -127,6 +133,10 @@ export function activate(context: vscode.ExtensionContext): void {
       } else {
         vscode.window.showInformationMessage('Sentinel: No active document to analyze.');
       }
+    }),
+
+    vscode.commands.registerCommand('sentinel.scanWorkspace', () => {
+      void scanEntireWorkspace();
     }),
 
     vscode.commands.registerCommand('sentinel.showDashboard', () => {
@@ -356,7 +366,7 @@ async function analyzeDocument(
   // ── Step 5: Persist developer vulnerability record to DATA/ and Neon DB ──
   const githubUser = authManager?.getSession()?.githubUsername ?? null;
   for (const finding of findings) {
-    void recordStore.save(finding, sessionId, developerId, githubUser);
+    await recordStore.save(finding, sessionId, developerId, githubUser);
   }
 
   // ── Step 5b: Auto-detect fixed findings in this file via Neon DB ────────
@@ -410,6 +420,72 @@ async function analyzeDocument(
       log(`[AI] Enrichment failed: ${err}`);
     });
   }
+}
+
+/**
+ * Scans all supported source code files in the entire workspace using Sentinel's OWASP Top 10 rules,
+ * generates AI explanations, records all findings into the Neon PostgreSQL database,
+ * updates the Problems panel with diagnostic markers, and refreshes the dashboard.
+ */
+async function scanEntireWorkspace(): Promise<void> {
+  const wsFolders = vscode.workspace.workspaceFolders;
+  if (!wsFolders || wsFolders.length === 0) {
+    vscode.window.showInformationMessage('Sentinel: No workspace folder open to scan.');
+    return;
+  }
+
+  const developerId = await resolveDeveloperId();
+  const githubUser = authManager?.getSession()?.githubUsername ?? null;
+  const sessionId = eventClient.getSessionId();
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Sentinel: Scanning workspace & syncing vulnerabilities to Database...',
+      cancellable: false,
+    },
+    async (progress) => {
+      // Find all supported code and manifest files in workspace
+      const files = await vscode.workspace.findFiles(
+        '**/*.{js,ts,jsx,tsx,py,java,cs,php,rb,go,json}',
+        '**/{node_modules,.git,out,dist,build,.vscode}/**'
+      );
+
+      let scannedCount = 0;
+      let totalFindings = 0;
+
+      for (const fileUri of files) {
+        try {
+          const doc = await vscode.workspace.openTextDocument(fileUri);
+          const text = doc.getText();
+          const fileName = doc.uri.fsPath;
+          const languageId = doc.languageId;
+
+          const findings = analyzer.analyze(text, fileName, languageId);
+          if (findings.length > 0) {
+            diagnosticManager.updateDiagnostics(doc, findings);
+            findingsCache.set(doc.uri.toString(), findings);
+
+            for (const finding of findings) {
+              await recordStore.save(finding, sessionId, developerId, githubUser);
+              totalFindings++;
+            }
+          }
+          scannedCount++;
+          progress.report({
+            message: `Scanned ${scannedCount}/${files.length} files (${totalFindings} vulnerabilities found)`,
+          });
+        } catch (err: any) {
+          console.error('[Sentinel] Error scanning file:', fileUri.fsPath, err.message);
+        }
+      }
+
+      vscode.window.showInformationMessage(
+        `✅ Sentinel: Scanned ${scannedCount} files. Identified ${totalFindings} vulnerabilities and saved them to Neon PostgreSQL database!`
+      );
+      void refreshDashboard();
+    }
+  );
 }
 
 // ─── Developer Action Handlers ────────────────────────────────────────────────
@@ -926,6 +1002,20 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
           selection: new vscode.Range(line, 0, line, 100),
           preview: false,
         });
+      });
+      break;
+    }
+
+    case 'SCAN_WORKSPACE': {
+      void scanEntireWorkspace();
+      break;
+    }
+
+    case 'CLEAR_DB': {
+      NeonDatabaseService.getInstance().clearAllVulnerabilityRecords().then(() => {
+        vscode.window.showInformationMessage('Sentinel: All vulnerability records in database cleared.');
+        recordStore.dispose();
+        void refreshDashboard();
       });
       break;
     }

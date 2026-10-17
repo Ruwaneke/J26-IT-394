@@ -164,6 +164,17 @@ export class NeonDatabaseService {
     return this.initPromise;
   }
 
+  /**
+   * Helper that guarantees the database is initialized and connection is verified
+   * before any read or write operation executes.
+   */
+  public async ensureInitialized(): Promise<boolean> {
+    if (this.isInitialized && this.isOnline && this.pool) {
+      return true;
+    }
+    return this.initialize();
+  }
+
   private async doInitialize(): Promise<boolean> {
     if (this.isInitialized && this.isOnline) {
       return true;
@@ -642,6 +653,9 @@ export class NeonDatabaseService {
       updatedAt: new Date().toISOString(),
     };
 
+    // Ensure database connection is ready
+    await this.ensureInitialized();
+
     if (this.pool && this.isOnline) {
       try {
         // Check if this finding already exists for this developer
@@ -678,6 +692,17 @@ export class NeonDatabaseService {
               row.record_id,
             ]
           );
+
+          // Log update activity
+          await this.logActivity({
+            developerId,
+            username: githubUsername || developerId,
+            actionType: 'VULNERABILITY_UPDATED',
+            findingId: finding.id,
+            vulnerabilityType: finding.type,
+            details: { file: finding.fileName, line: finding.lineNumber, severity: finding.severity },
+          });
+
           return {
             ...record,
             recordId: row.record_id,
@@ -716,6 +741,18 @@ export class NeonDatabaseService {
             record.detectedAt,
           ]
         );
+
+        // Log detection activity
+        await this.logActivity({
+          developerId,
+          username: githubUsername || developerId,
+          actionType: 'VULNERABILITY_DETECTED',
+          findingId: finding.id,
+          vulnerabilityType: finding.type,
+          details: { file: finding.fileName, line: finding.lineNumber, severity: finding.severity },
+        });
+
+        console.log(`[NeonDb] Successfully saved ${record.vulnerabilityType} (${record.findingId}) for ${developerId} in ${path.basename(record.fileName)}`);
       } catch (err: any) {
         console.error('[NeonDb] saveVulnerabilityRecord error:', err.message);
       }
@@ -737,6 +774,8 @@ export class NeonDatabaseService {
   ): Promise<boolean> {
     const isFixed = status === 'FIXED';
     const nowIso = new Date().toISOString();
+
+    await this.ensureInitialized();
 
     if (this.pool && this.isOnline) {
       try {
@@ -784,6 +823,8 @@ export class NeonDatabaseService {
     currentActiveFindingIds: string[]
   ): Promise<Array<{ findingId: string; recordId: string; vulnerabilityType: string; fileName: string; lineNumber: number }>> {
     const normFile = (fileName || '').replace(/\\/g, '/').toLowerCase();
+
+    await this.ensureInitialized();
 
     if (!this.pool || !this.isOnline) {
       // Offline fallback: update in-memory records
@@ -875,6 +916,8 @@ export class NeonDatabaseService {
    * optionally filtered by developer ID.
    */
   public async clearAllVulnerabilityRecords(developerId?: string): Promise<{ success: boolean; deletedCount: number }> {
+    await this.ensureInitialized();
+
     if (developerId) {
       this.memRecords = this.memRecords.filter(r => r.developerId !== developerId);
     } else {
@@ -916,6 +959,8 @@ export class NeonDatabaseService {
    * Formats precise percentage based on identified vs fixed findings count.
    */
   public async getVulnerabilityStats(developerId?: string, fileName?: string): Promise<VulnerabilityStats> {
+    await this.ensureInitialized();
+
     const stats: VulnerabilityStats = {
       totalIdentified: 0,
       fixedCount: 0,
@@ -1003,6 +1048,7 @@ export class NeonDatabaseService {
     statusFilter?: string,
     limit = 100
   ): Promise<DbVulnerabilityRecord[]> {
+    await this.ensureInitialized();
     if (this.pool && this.isOnline) {
       try {
         let sql = `SELECT record_id, finding_id, developer_id, github_username, session_id,
@@ -1049,6 +1095,7 @@ export class NeonDatabaseService {
     details?: any;
   }): Promise<void> {
     const id = `ACT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    await this.ensureInitialized();
     if (this.pool && this.isOnline) {
       try {
         await this.pool.query(

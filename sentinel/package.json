@@ -44,6 +44,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "sentinel.scanWorkspace",
+        "title": "Sentinel: Scan Entire Workspace & Sync Database",
+        "icon": "$(sync)"
+      },
+      {
         "command": "sentinel.showOutput",
         "title": "Sentinel: Show Output Channel"
       }
