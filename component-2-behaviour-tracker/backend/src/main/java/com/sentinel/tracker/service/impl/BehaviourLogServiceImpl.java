@@ -55,6 +55,7 @@ public class BehaviourLogServiceImpl implements BehaviourLogService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public BehaviourLogResponse getBehaviourLogById(Long id) {
         BehaviourLog bl = behaviourLogRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Behaviour log", "id", id));
@@ -62,6 +63,7 @@ public class BehaviourLogServiceImpl implements BehaviourLogService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<BehaviourLogResponse> getBehaviourLogsByDeveloper(Long developerId) {
         if (!developerRepository.existsById(developerId)) {
             throw new ResourceNotFoundException("Developer", "id", developerId);
@@ -72,6 +74,7 @@ public class BehaviourLogServiceImpl implements BehaviourLogService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<BehaviourLogResponse> getAllBehaviourLogs() {
         return behaviourLogRepository.findAll().stream()
                 .map(BehaviourLogResponse::from)
