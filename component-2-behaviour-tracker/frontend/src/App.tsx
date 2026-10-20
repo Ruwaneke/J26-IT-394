@@ -6,6 +6,7 @@ import { DeveloperProfile } from './pages/DeveloperProfile';
 import { SecurityEvents } from './pages/SecurityEvents';
 import { LifecycleTimeline } from './pages/LifecycleTimeline';
 import { BehaviourAnalysis } from './pages/BehaviourAnalysis';
+import { QualityTests } from './pages/QualityTests';
 import { EmptyState } from './components/Cards';
 
 export const App: React.FC = () => {
@@ -20,6 +21,7 @@ export const App: React.FC = () => {
             <Route path="lifecycle" element={<LifecycleTimeline />} />
             <Route path="behaviour" element={<BehaviourAnalysis />} />
           </Route>
+          <Route path="quality" element={<QualityTests />} />
           <Route
             path="*"
             element={

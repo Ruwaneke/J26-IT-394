@@ -115,6 +115,13 @@ export const Layout: React.FC = () => {
           )}
         </nav>
 
+        <nav className="nav" aria-label="Quality">
+          <NavLink to="/quality" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <Icon name="shieldCheck" size={16} />
+            <span>Quality &amp; Regression Tests</span>
+          </NavLink>
+        </nav>
+
         <p className="sidebar-note">
           Final Year Research Project
           <br />

@@ -1,0 +1,194 @@
+/* Quality & Regression Tests page (TASKS P1-5). Uses the theme tokens from index.css only,
+   so light and dark themes follow the rest of the dashboard. */
+
+.quality .button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.quality-hero-body {
+  min-width: 0;
+}
+
+.quality-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.quality-note {
+  color: var(--ink-2);
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.quality-spinner {
+  width: 26px;
+  height: 26px;
+  border-width: 3px;
+}
+
+.quality-time {
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.quality-categories {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.quality-category {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink-1);
+  border: 0;
+  cursor: pointer;
+}
+
+.quality-category:hover {
+  background: var(--hover);
+}
+
+.quality-category[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow);
+}
+
+.quality-category-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.quality-category-count {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quality-category-text,
+.quality-category-foot {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.quality-category-foot {
+  color: var(--tone);
+  font-weight: 600;
+}
+
+.quality-category .meter-track {
+  display: block;
+  height: 6px;
+  margin-top: auto;
+}
+
+.quality-fill {
+  display: block;
+  background: var(--tone);
+}
+
+.quality-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.input.quality-search {
+  width: 220px;
+  max-width: 100%;
+  font-variant-numeric: normal;
+}
+
+.quality-table td {
+  vertical-align: top;
+}
+
+.quality-row-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.quality-row-toggle > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--ink-muted);
+}
+
+.quality-row-toggle .cell-title,
+.quality-row-toggle .cell-sub {
+  display: block;
+}
+
+.quality-row-toggle:hover .cell-title {
+  text-decoration: underline;
+}
+
+.quality-table tr.is-open td {
+  border-bottom-color: transparent;
+}
+
+.quality-table .quality-detail:hover {
+  background: none;
+}
+
+.quality-detail td {
+  padding-top: 0;
+}
+
+.quality-detail .facts {
+  margin-bottom: 12px;
+}
+
+.quality-detail-label {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+
+.quality-pre {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.quality-terminal {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+@media (width <= 860px) {
+  .quality-filters,
+  .quality-filters .select-field {
+    width: 100%;
+  }
+
+  .input.quality-search {
+    flex: 1;
+    width: auto;
+  }
+}
