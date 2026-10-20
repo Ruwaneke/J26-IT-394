@@ -170,6 +170,36 @@ class BehaviourAnalysisServiceTest {
     }
 
     @Test
+    void repeatedOpenLogs_doNotChangeAnyRateOrCount() {
+        SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.HIGH);
+        SecurityEvent e2 = createEvent(2L, "XSS", Severity.MEDIUM);
+        SecurityEvent e3 = createEvent(3L, "HARDCODED_SECRET", Severity.LOW);
+        createLog(e1, BehaviourAction.OPEN, 10L);
+        createLog(e1, BehaviourAction.FIX, 60L);
+        createLog(e2, BehaviourAction.OPEN, 20L);
+        createLog(e3, BehaviourAction.IGNORE, 30L);
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse before = analysisService.getDeveloperBehaviourSummary(1L);
+
+        // The same-status OPENs that are now accepted (TASKS P1-1)
+        createLog(e1, BehaviourAction.OPEN, 15L);
+        createLog(e2, BehaviourAction.OPEN, 25L);
+        createLog(e2, BehaviourAction.OPEN, 35L);
+
+        DeveloperBehaviourSummaryResponse after = analysisService.getDeveloperBehaviourSummary(1L);
+
+        assertThat(after.getOpenedCount()).isEqualTo(before.getOpenedCount()).isEqualTo(2L);
+        assertThat(after.getFixedCount()).isEqualTo(before.getFixedCount());
+        assertThat(after.getIgnoredCount()).isEqualTo(before.getIgnoredCount());
+        assertThat(after.getFixRate()).isEqualTo(before.getFixRate()).isEqualTo(33.3);
+        assertThat(after.getIgnoreRate()).isEqualTo(before.getIgnoreRate()).isEqualTo(33.3);
+        assertThat(after.getReopenRate()).isEqualTo(before.getReopenRate());
+        assertThat(after.getHighSeverityFixRate()).isEqualTo(before.getHighSeverityFixRate()).isEqualTo(100.0);
+        assertThat(after.getBehaviourClassification()).isEqualTo(before.getBehaviourClassification());
+    }
+
+    @Test
     void ratesNeverExceed100_evenWithRepeatedActions() {
         SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.CRITICAL);
 
