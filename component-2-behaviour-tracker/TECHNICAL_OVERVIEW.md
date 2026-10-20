@@ -48,7 +48,9 @@ Break any of these and the system breaks, sometimes silently.
    `DeveloperInteractionService.createInteraction`. The deprecated `POST /api/behaviour-logs`
    delegates to it. Never write `behaviour_logs` rows anywhere else.
 3. **Every status change writes exactly one lifecycle history row**, in the same
-   transaction. A status must never change without its history row.
+   transaction. A status must never change without its history row. Every history row is
+   sealed with `LifecycleHashChain.seal` before it is saved, and history rows are never
+   updated afterwards (§5.5).
 4. **Transitions follow `SecurityEventStatus.allowedTransitions()`.** Change the lifecycle
    only through that method, with tests and documentation (see
    [§14.4](#144-change-the-lifecycle)).
@@ -103,14 +105,14 @@ flowchart TB
 | `controller/` | HTTP mapping, `@Valid` on request bodies, status codes, OpenAPI annotations | No business logic. Call one service method and wrap the result in a `ResponseEntity`. |
 | `dto/` | Request and response objects | Requests carry Bean Validation. Responses have a static `from(entity)` factory. Never return an entity from a controller. |
 | `entity/` | JPA entities | Lombok `@Data @Builder`. Relationships are `LAZY`. Audit fields use `@CreatedDate` and `@LastModifiedDate`. |
-| `enums/` | `Severity`, `BehaviourAction`, `SecurityEventStatus` | Stored as `STRING` in the database. The lifecycle lives in `SecurityEventStatus`. |
+| `enums/` | `Severity`, `BehaviourAction`, `SecurityEventStatus`, `FixVerificationStatus` (and `HistoryIntegrityStatus`) | Stored as `STRING` in the database. The lifecycle lives in `SecurityEventStatus`. |
 | `repository/` | Spring Data interfaces | Use derived queries; use `@EntityGraph` when a caller maps lazy relations. |
 | `service/` | Interfaces | One interface per use-case area. |
 | `service/impl/` | Implementations | Class-level `@Transactional(readOnly = true)`, `@Transactional` on writes. Throw domain exceptions, never return error values. |
 | `client/` | Outbound HTTP (GitHub) | Translate failures into domain exceptions. |
 | `config/` | JPA auditing, GitHub `RestClient` (5 s connect and read timeouts) | — |
 | `exception/` | Domain exceptions and `GlobalExceptionHandler` | Each exception maps to exactly one HTTP status. |
-| `analysis/` | Empty (`.gitkeep`), reserved | Planned home for repeated-mistake and session analysis (TASKS Phase 2). |
+| `analysis/` | `LifecycleHashChain` (history hash chain, §5.5); planned home for repeated-mistake and session analysis (TASKS Phase 2) | Plain classes with no Spring or repository dependencies, so they are unit-testable. |
 
 ### 1.3 Services
 
@@ -120,8 +122,9 @@ flowchart TB
 | `GitHubAuthService` | `GitHubAuthServiceImpl` | Verify the token, then find, link or create the developer |
 | `SecurityEventService` | `SecurityEventServiceImpl` | Create an event and its first lifecycle row; get, list, list by developer |
 | `DeveloperInteractionService` | `DeveloperInteractionServiceImpl` | **The single write path for actions**; reads |
+| `FixVerificationService` | `ClaimOnlyFixVerificationService` | Whether a `FIX` claim is verified (§4.5). Returns `CLAIMED` until a verification source exists |
 | `BehaviourLogService` | `BehaviourLogServiceImpl` | Legacy API: the create call delegates to interactions; reads |
-| `VulnerabilityLifecycleHistoryService` | `VulnerabilityLifecycleHistoryServiceImpl` | History of an event, oldest first |
+| `VulnerabilityLifecycleHistoryService` | `VulnerabilityLifecycleHistoryServiceImpl` | History of an event, oldest first; verify its hash chain (§5.5) |
 | `BehaviourAnalysisService` | `BehaviourAnalysisServiceImpl` | Behaviour summary and classification |
 
 ### 1.4 Tech stack
@@ -213,6 +216,7 @@ erDiagram
         bigint time_since_detection_seconds
         varchar session_id
         varchar source
+        varchar fix_verification
         timestamp created_at
     }
     vulnerability_lifecycle_history {
@@ -222,6 +226,8 @@ erDiagram
         varchar new_status
         timestamp changed_at
         varchar changed_by
+        varchar prev_hash
+        varchar entry_hash
         timestamp created_at
     }
 ```
@@ -264,6 +270,7 @@ erDiagram
 | `time_since_detection_seconds` | BIGINT | — | `timestamp − event.detected_at` |
 | `session_id` | VARCHAR(255) | — | C1's session id |
 | `source` | VARCHAR(255) | — | `VSCODE` from C1 |
+| `fix_verification` | VARCHAR(50) | — | `FixVerificationStatus` on `FIX` rows (§4.5); `NULL` on other actions. Older FIX rows are set to `CLAIMED` by `schema.sql` |
 
 **`vulnerability_lifecycle_history`**
 
@@ -271,8 +278,10 @@ erDiagram
 |---|---|
 | `previous_status` | `NULL` only on the first row (`→ DETECTED`) |
 | `new_status` | NOT NULL |
-| `changed_at` | Event's `detected_at` for the first row; the action's timestamp after that |
+| `changed_at` | Event's `detected_at` for the first row; the action's timestamp after that. Truncated to microseconds (§5.5) |
 | `changed_by` | `SYSTEM` for the first row; the developer's `developer_identifier` after that |
+| `prev_hash` | VARCHAR(64), nullable. The previous row's `entry_hash` (genesis value for the first). `NULL` on rows written before P2-9 |
+| `entry_hash` | VARCHAR(64), nullable. SHA-256 over `prev_hash` and the row's fields (§5.5). `NULL` on rows written before P2-9 |
 
 ### 3.3 Indexes
 
@@ -313,6 +322,7 @@ backfill anything. So:
 | `Severity` | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` | C1 also has `INFO` and sends it as `LOW`. Do not add `INFO` without agreement, because the C1 mapping depends on it. |
 | `BehaviourAction` | `OPEN`, `IGNORE`, `FIX`, `REOPEN`, `DISMISS` | An unknown value gets `400` (tested). |
 | `SecurityEventStatus` | `DETECTED`, `OPENED`, `IGNORED`, `REOPENED`, `FIXED` | — |
+| `FixVerificationStatus` | `CLAIMED`, `VERIFIED`, `STILL_VULNERABLE` | Set on `FIX` interactions only (§4.5). |
 
 ### 4.2 Action → status
 
@@ -336,16 +346,40 @@ backfill anything. So:
 
 `IGNORED → OPENED` must stay valid. In C1, ignored findings reappear and can be opened again.
 
-### 4.4 Same-status actions — current behaviour and required behaviour
+### 4.4 Same-status actions
 
-- **Current code:** an action whose target equals the current status (a second `OPEN`, or
-  `DISMISS` after `IGNORE`) is not a transition, so it gets `409` and nothing is stored.
-- **Problem:** C1 sends `OPEN` both when an explanation is viewed and when a secure example
-  is viewed. The second view of the same finding gets `409`. C1 retries 3 times and then
-  drops it, so real behaviour is lost.
-- **Required behaviour** (documented in `backend/README.md`; TASKS **P1-1**): store the
-  interaction and return `201`, but leave the status unchanged and write **no** history row.
-  Real transitions that are not allowed still get `409`.
+- An action whose target equals the current status (a second `OPEN`, or `DISMISS` after
+  `IGNORE`) is **not a transition**. The interaction is stored (with its response time) and
+  the API returns `201`, but the status is left unchanged and **no** history row is written
+  (TASKS **P1-1**, done 2026-10-20).
+- **Why:** C1 sends `OPEN` both when an explanation is viewed and when a secure example is
+  viewed, and drops a request silently after 3 failed retries. Rejecting the repeat lost real
+  behaviour.
+- Real transitions that are not allowed (for example `OPEN` on `FIXED`) still get `409`, and
+  nothing is stored.
+- Analysis is unaffected for rates and counts, which use distinct events (§7.1).
+  `averageResponseTimeSeconds` and the `INSUFFICIENT_DATA` action count do include the
+  repeated logs, as they include every log.
+
+### 4.5 Claimed versus verified fixes
+
+- A `FIX` is a **claim**. C1 sends it for `FIX_APPLIED`, which only shows the secure example
+  (`sentinel/src/extension.ts`, `handleFixAction`). C2 has no evidence about the code.
+- The lifecycle is unchanged: `FIX` still moves the event to `FIXED`, because `FIXED` records
+  what the developer reported and C1 drops rejected requests (§9.3).
+- Each `FIX` log stores `fix_verification` from `FixVerificationService.verifyFix(event,
+  claimedAt)`: `CLAIMED` (no evidence), `VERIFIED` or `STILL_VULNERABLE`. A `null` answer is
+  stored as `CLAIMED`. Other actions store `NULL` and never call the service.
+- `ClaimOnlyFixVerificationService` is the only implementation and returns `CLAIMED`. Tests
+  use a mock with controlled results. A real source needs C1 to report whether the finding is
+  still present after a fix, which is a C1 change (📝 proposal, see TASKS "Notify other
+  components"). The service runs inside the write transaction under the row lock, so it must
+  not make slow calls.
+- `STILL_VULNERABLE` does not reopen the event or reject the claim. It is evidence for
+  analysis, not a lifecycle rule.
+- Analysis: `fixedCount`/`fixRate` count claimed fixes and drive the classification
+  (unchanged; changing that needs the supervisor, §7.3). `verifiedFixCount`/`verifiedFixRate`
+  count only `VERIFIED` fixes (§7.1).
 
 ---
 
@@ -356,9 +390,10 @@ backfill anything. So:
 One transaction:
 
 1. Load the developer (`404` if missing).
-2. `detectedAt` = request value, or `now()`.
+2. `detectedAt` = request value, or `now()`, truncated to microseconds.
 3. Save the event with status `DETECTED`.
-4. Save the history row `(null → DETECTED, changedAt = detectedAt, changedBy = "SYSTEM")`.
+4. Save the history row `(null → DETECTED, changedAt = detectedAt, changedBy = "SYSTEM")`,
+   sealed with the genesis `prevHash` (§5.5).
 5. Return `201` with a `SecurityEventResponse`.
 
 ### 5.2 Record an action — `DeveloperInteractionServiceImpl.createInteraction`
@@ -372,18 +407,23 @@ One transaction:
 3. **Ownership:** if `event.developer.id ≠ developer.id`, return `403`
    (`AccessDeniedException`).
 4. Target status = `resolveTargetStatus(action)`.
-5. **Transition check:** if it is not allowed, return `409`
-   (`InvalidStatusTransitionException`; the message lists the allowed statuses).
+5. **Transition check:** if the target differs from the current status and the transition
+   is not allowed, return `409` (`InvalidStatusTransitionException`; the message lists the
+   allowed statuses). A same-status action skips this check (§4.4).
 6. `actionTimestamp` = request value, or `now()`.
    `timeSinceDetectionSeconds = SECONDS.between(event.detectedAt, actionTimestamp)`.
-7. Save the `BehaviourLog`.
-8. Set the event's status and save it.
-9. Save the history row `(current → target, changedAt = actionTimestamp,
-   changedBy = developerIdentifier)`.
-10. Return `201` with a `DeveloperInteractionResponse`.
+7. For `FIX` only: `fixVerification = FixVerificationService.verifyFix(event, actionTimestamp)`,
+   or `CLAIMED` if it returns `null` (§4.5).
+8. Save the `BehaviourLog`.
+9. Only if the status changes: set the event's status and save it.
+10. Only if the status changes: save the history row `(current → target,
+   changedAt = actionTimestamp, changedBy = developerIdentifier)`, sealed with
+   `prevHash` = the `entry_hash` of the event's latest row (`findFirstBySecurityEventIdOrderByIdDesc`).
+11. Return `201` with a `DeveloperInteractionResponse` (including `fixVerification`).
 
 Rules for changing this method:
-- Keep the lock.
+- Keep the lock. It also keeps the hash chain linear: two concurrent actions cannot both
+  read the same latest row.
 - Keep the ownership check before the transition check.
 - Never write history without a status change, or a status change without history.
 
@@ -412,6 +452,41 @@ Rules for changing this method:
   4. Otherwise create a new developer with `developer_identifier = login`.
 - The token is never stored or logged.
 
+### 5.5 Lifecycle hash chain — `analysis/LifecycleHashChain` (tamper evidence)
+
+The history rows of one event form a hash chain, so later edits can be detected.
+
+- **Order.** Rows are chained in id (insertion) order, not `changed_at` order, because
+  `changed_at` comes from the client's `actionTimestamp` and need not increase.
+- **Hash.** `entry_hash = SHA-256(prev_hash|security_event_id|previous_status|new_status|changed_at|changed_by)`,
+  hex-encoded, with `null` written as an empty string and `changed_at` formatted as
+  `uuuu-MM-dd'T'HH:mm:ss.SSSSSS`. The first row of each event uses the genesis value (64
+  zeros) as `prev_hash`.
+- **Precision.** `changed_at` is truncated to microseconds *before it is saved*
+  (`LifecycleHashChain.normalise`, applied by `seal`). PostgreSQL stores microseconds and
+  rounds anything finer, so an untruncated value would read back differently and break its
+  own hash.
+- **Writing.** Both writers call `LifecycleHashChain.seal(entry, prevHash)` just before
+  saving (§5.1 step 4, §5.2 step 10). Same-status actions write no row, so they do not touch
+  the chain.
+- **Verifying.** `GET /api/lifecycle-history/security-event/{id}/verify` walks the rows in
+  id order:
+  - leading rows with both hashes `NULL` were written before the chain existed and are
+    counted in `unchainedEntryCount`;
+  - from the first chained row on, `prev_hash` must equal the previous row's `entry_hash`
+    (genesis for the first chained row), and `entry_hash` must match the row's fields;
+  - the first failure gives `BROKEN` with `brokenAtEntry` (1-based position),
+    `brokenAtHistoryId` and `reason`. An event with no rows at all is `BROKEN` at entry 1,
+    because every event gets a `DETECTED` row when it is created;
+  - otherwise the result is `VALID`, or `UNCHAINED` if any legacy rows exist.
+- **What it detects.** An edited field (`BROKEN` at that row); a deleted, inserted or
+  reordered row, or a re-hashed edited row (`BROKEN` at the next row); a row whose hashes
+  were removed after chained rows.
+- **Limits.** The history is tamper-*evident*, not tamper-proof. Someone with write access
+  who knows the algorithm can rebuild the whole chain. Deleting the newest rows is not
+  detected without an outside anchor (a 📝 follow-up in TASKS P2-9). Legacy rows are not
+  backfilled, since that would vouch for history that was never protected.
+
 ---
 
 ## 6. Read paths and transactions
@@ -427,8 +502,8 @@ Rules for changing this method:
   - load the relations they map, using `@EntityGraph` on the repository method.
 
   `BehaviourLogRepository` does this for `findById`, `findByDeveloperId`,
-  `findBySecurityEventId` and `findByDeveloperIdAndActionType` (an uncommitted fix; TASKS
-  **P0-1**).
+  `findBySecurityEventId` and `findByDeveloperIdAndActionType`, tested by
+  `BehaviourLogRepositoryTest` (TASKS **P0-1**).
 - `findAll()` is not overridden with an entity graph, so it runs one query per log (N+1)
   within its transaction. Watch this once data grows (TASKS **P5-3**).
 - A new repository method whose results are mapped through a lazy relation needs
@@ -458,6 +533,8 @@ Source: `BehaviourAnalysisServiceImpl.getDeveloperBehaviourSummary`.
    - `fixRate` uses fixed.
    - `ignoreRate` uses ignoredOrDismissed (an event both ignored and dismissed counts once).
    - `reopenRate` uses reopened.
+   - `verifiedFixRate` uses verifiedFixed. `fixRate` and `fixedCount` count **claimed** fixes.
+   - verifiedFixed = `{FIX}` logs whose `fix_verification` is `VERIFIED` (§4.5)
 6. `highSeverityFixRate` = fixed HIGH or CRITICAL events / all HIGH or CRITICAL events.
    It is **`null`** when there are none, meaning "not applicable", not 0.
 7. `averageResponseTimeSeconds` = the mean of `time_since_detection_seconds` over **all**
@@ -515,7 +592,8 @@ else                                                      → SECURITY_NEUTRAL
 | GET | `/api/developer-interactions` · `/{id}` · `/developer/{developerId}` · `/security-event/{securityEventId}` | — | `200` | 404 |
 | POST | `/api/behaviour-logs` (deprecated) | `CreateBehaviourLogRequest` | `201` + `Deprecation`/`Link` headers | as interactions |
 | GET | `/api/behaviour-logs` · `/{id}` · `/developer/{developerId}` | — | `200` | 404 |
-| GET | `/api/lifecycle-history/security-event/{id}`; also served at `/api/lifecycle/security-event/{id}`, `/api/lifecycle-history/{id}` and `/api/lifecycle/{id}` | — | `200` list, oldest first | 404 |
+| GET | `/api/lifecycle-history/security-event/{id}`; also served at `/api/lifecycle/security-event/{id}`, `/api/lifecycle-history/{id}` and `/api/lifecycle/{id}` | — | `200` list, oldest first (each item includes `entryHash`) | 404 |
+| GET | `/api/lifecycle-history/security-event/{id}/verify`; also served at the same three alias prefixes with `/verify` | — | `200` `HistoryVerificationResponse` (`status` `VALID`/`BROKEN`/`UNCHAINED`, §5.5) | 404 |
 | GET | `/api/developer-behaviour/{developerId}` | — | `200` `DeveloperBehaviourSummaryResponse` | 404 |
 
 The dashboard uses the `/api/lifecycle/...` alias. Keep all four lifecycle paths.
@@ -664,7 +742,8 @@ the earliest log per `session_id`.
 | `components/Badges.tsx` | Status, severity, action and classification badges, plus **`CLASSIFICATION_RULES`** (the rules from §7.2, in words) |
 | `components/Cards.tsx` | `Card`, `StatTile`, `Meter`, page header, loading, error and empty states, formatters |
 | `components/Layout.tsx`, `Icon.tsx` | Shell and icons |
-| `pages/` | `Home`, `DeveloperProfile`, `SecurityEvents`, `LifecycleTimeline`, `BehaviourAnalysis` |
+| `pages/` | `Home`, `DeveloperProfile`, `SecurityEvents`, `LifecycleTimeline`, `BehaviourAnalysis`, `QualityTests` (with `QualityTests.css`) |
+| `../dev/` (outside `src/`) | Node scripts for the test report (TASKS P1-5): `surefireReport.mjs` reads Surefire's XML, `qualityPlugin.mjs` is the dev-server plugin behind the Quality page, `testReport.mjs` is `npm run test:report`, `quality.test.mjs` is `npm test` |
 
 ### 11.2 Routes
 
@@ -675,6 +754,7 @@ the earliest log per `session_id`.
 | `/developers/:developerId/security-events` | Security events |
 | `/developers/:developerId/lifecycle` | Lifecycle timeline |
 | `/developers/:developerId/behaviour` | Behaviour analysis |
+| `/quality` | Quality & Regression Tests (§13.4) |
 | `*` | Not found |
 
 ### 11.3 Frontend rules
@@ -686,7 +766,9 @@ the earliest log per `session_id`.
 - All HTTP calls go through `api` in `client.ts`, never through a direct `fetch` or `axios`
   call in a page.
 - The dashboard is **read-only**. It must not write security events or interactions (that
-  would bypass C1 and pollute research data).
+  would bypass C1 and pollute research data). The Quality page's **Run test suite** button
+  is not an exception: it runs `mvn test` on the H2 test database through the dev server and
+  never touches the application's data (§13.4).
 - Every page handles loading, error (including "backend unreachable") and empty states with
   the shared components.
 - `dist/` and `node_modules/` are git-ignored. Do not commit build output.
@@ -712,27 +794,71 @@ the earliest log per `session_id`.
 
 ## 13. Testing
 
-### 13.1 What exists (93 test methods)
+### 13.1 What exists (402 test methods in 32 classes)
 
 | Class | Type | Covers |
 |---|---|---|
 | `DeveloperRepositoryTest` | `@DataJpaTest` | Save, find, exists |
+| `BehaviourLogRepositoryTest` | `@DataJpaTest` | The four `@EntityGraph` reads load developer and event; results map to DTOs after detaching |
 | `SecurityEventRepositoryPhase02Test` | `@DataJpaTest` | Persistence, default status, filters, counts |
 | `DeveloperServiceTest` | Mockito | Create, duplicate, get, list |
-| `SecurityEventServiceTest` | Mockito | Create with initial history, not found |
+| `SecurityEventServiceTest` | Mockito | Create with initial history, the initial row starts the hash chain (genesis `prevHash`), not found |
 | `SecurityEventServicePhase02Test` | Mockito (nested) | Timestamps, statuses, fields, severities, line 0, list and get |
 | `GitHubAuthServiceTest` | Mockito | New, existing, legacy link, conflict, invalid token, GitHub down |
 | `BehaviourLogServiceTest` | Mockito | Delegation to interactions, legacy response |
-| `BehaviourAnalysisServiceTest` | Mockito | Every classification, distinct counting, ≤ 100% rates, not-applicable high-severity rate |
+| `BehaviourAnalysisServiceTest` | Mockito | Every classification, distinct counting, ≤ 100% rates, not-applicable high-severity rate, repeated `OPEN`s change no rate |
+| `DeveloperInteractionServiceTest` | Mockito | Same-status `OPEN` and `DISMISS` (logged, no status change, no history), valid transition writes one correct history row, the new row is chained to the latest row's `entryHash`, `OPEN` on `FIXED` stores nothing |
 | `SecurityEventControllerTest` | MockMvc | All validation cases, 201, 404 |
 | `DeveloperInteractionControllerTest` | MockMvc | 201, 400 cases, 403, 409, length limits, unknown action |
+| `DeveloperInteractionFlowIntegrationTest` | `@SpringBootTest` + H2 | Real C1-style requests: second `OPEN` and `DISMISS` after `IGNORE` → 201 with no history row; `OPEN` on `FIXED` → 409, nothing stored |
+| `LifecycleHistoryVerificationIntegrationTest` | `@SpringBootTest` + H2 | Hash chain through the real write path: untouched → `VALID`; edited status, edited timestamp, deleted, reordered, re-hashed and hash-stripped rows → `BROKEN` at the expected entry; legacy rows → `UNCHAINED`; newest-row deletion not detected (documented limit); 404; alias path; chain cost on 205 rows |
+| `LifecycleHashChainTest` | Unit | Deterministic hash, every field changes it, microsecond truncation, `seal`, genesis fallback |
 | `DeveloperBehaviourControllerTest` | MockMvc | 200 |
 
-**Gaps to close** (TASKS **P1-3**):
-- no unit tests of `DeveloperInteractionServiceImpl` itself (history row written, lock
-  used, response time calculated, same-status behaviour);
-- no table-driven test of `SecurityEventStatus` covering all 25 from → to pairs;
-- no tests of the `@EntityGraph` reads.
+Added by TASKS **P1-5** (API contract and regression suite). The `*ApiContractTest` and
+other `controller/` integration classes extend `ApiContractTestSupport`: the real stack on
+H2, C1's exact request bodies, and cleanup of every row after each test.
+
+| Class | Type | Covers |
+|---|---|---|
+| `SecurityEventApiContractTest` | `@SpringBootTest` + H2 | `POST`/`GET /api/security-events`: C1 body → full response and `DETECTED` row, every severity, line 0, max lengths, every validation message, wrong types and ranges, malformed bodies, ISO-8601 `detectedAt`/`timestamp` (valid, nanoseconds, `Z`, offsets, invalid dates), `404`, error format |
+| `DeveloperInteractionApiContractTest` | `@SpringBootTest` + H2 | `POST`/`GET /api/developer-interactions`: C1 body → full response, response time, optional fields, validation, invalid actions and timestamps, `404` and `403` with nothing stored, `403` before `409`, all reads and their `404`s |
+| `DeveloperApiContractTest` | `@SpringBootTest` + H2 | `/api/developers`: `201` shape, client GitHub fields ignored, `409` duplicate, blank and over-long identifiers, malformed bodies, reads, `GET /` |
+| `GitHubAuthApiContractTest` | `@SpringBootTest` + H2 + `MockRestServiceServer` | `POST /api/auth/github` through the real `GitHubApiClient` with GitHub mocked: new, returning, legacy, `409`, client identity fields ignored, `401`, `502` (5xx, rate limit, network, non-JSON, incomplete profile), `400` without calling GitHub, the exact request sent to GitHub, token never echoed or logged |
+| `LifecycleAndBehaviourApiContractTest` | `@SpringBootTest` + H2 | All four history and verify path forms, `404` on each, oldest-first order, the behaviour summary against hand-calculated values, no-event and unknown developers |
+| `LifecycleTransitionIntegrationTest` | `@SpringBootTest` + H2 | All 25 status × action pairs (transition, same-status or `409` with nothing stored), each history row's from, to, `changedAt`, `changedBy` and `prevHash`; a full journey; repeated `OPEN` (P1-1); the deprecated endpoint follows the same rules |
+| `LifecycleHashChainEdgeCaseIntegrationTest` | `@SpringBootTest` + H2 | Altered hash values, replaced genesis, missing `DETECTED` entry, edited actor, an entry moved to another event, separate chains per event, client timestamps out of order, legacy event with no history (`BROKEN`), legacy rows then a new action (`UNCHAINED`), no backfilling |
+| `WriteFailureRollbackIntegrationTest` | `@SpringBootTest` + H2 | A temporary `CHECK` constraint makes the history insert fail: the event or the log and status change roll back, `500` hides database details, no orphans |
+| `ConcurrentInteractionIntegrationTest` | `@SpringBootTest` + own H2 database | 8 threads on one event: one transition for 8 `OPEN`s; mixed actions keep a valid path, status and chain; concurrent duplicate developer → one row |
+| `SchemaCompatibilityTest` | `@DataJpaTest` + H2 in PostgreSQL mode | `schema.sql` runs twice, matches the entities (columns, nullability, lengths, indexes), FK delete rules, unique constraints |
+| `VulnerabilityLifecycleHistoryRepositoryTest` | `@DataJpaTest` | Order by `changed_at` versus id, latest-row lookup, per-event isolation, hashes and microseconds persisted |
+| `SecurityEventStatusTest` | Unit | All 25 from → to pairs against §4.3 |
+| `DeveloperInteractionServiceRulesTest` | Mockito | `findByIdForUpdate`, response time with and without `actionTimestamp`, history row fields, `DISMISS`, `403` before `409`, `404`s, stored session, source and metadata |
+| `VulnerabilityLifecycleHistoryServiceTest` | Mockito | History order and `404`; the verification policy on hand-built chains (valid, empty, legacy, legacy then chained, unhashed after chained, one hash only, edited, missing entry, first failure only) |
+
+Added by TASKS **P1-6** (claimed versus verified fixes, §4.5):
+
+| Class | Type | Covers |
+|---|---|---|
+| `FixVerificationRulesTest` | Mockito, mock verification results | Each result stored on the `FIX` log and returned, the event still moves to `FIXED` with one history row; `null` → `CLAIMED`; `FIX` on `FIXED` stores the result without history; `403` before verification; other actions never call the service and store `NULL`; the default implementation never reports `VERIFIED` |
+| `FixVerificationIntegrationTest` | `@SpringBootTest` + H2, `@SpyBean` with controlled results | C1's `FIX` body → `CLAIMED` by default; `VERIFIED` and `STILL_VULNERABLE` stored and returned, lifecycle and chain unchanged; other actions `null`; summary separates claimed from verified fixes (hand-calculated); the deprecated endpoint records `CLAIMED` |
+
+`BehaviourAnalysisServiceTest` (claimed versus verified counts and rates, classification
+unchanged) and `SchemaCompatibilityTest` (re-running `schema.sql` marks older `FIX` rows
+`CLAIMED` only) gained one test each.
+
+The P1-3 gaps are closed by these classes.
+
+**Found by P1-5, not changed** (behaviour kept as it is; see TASKS Phase 6):
+- non-numeric path ids (`/api/developers/abc`), unknown routes, a wrong `Content-Type` and
+  a wrong HTTP method all return `500` instead of `400`, `404`, `415` and `405`, because
+  `GlobalExceptionHandler`'s catch-all handles Spring MVC's own exceptions;
+- a timestamp ending in `Z` is accepted and the zone is dropped, while `+05:30` is rejected;
+  a numeric `severity` is read as the enum position (`3` → `CRITICAL`); `lineNumber` `1.5`
+  becomes `1`. C1 sends none of these;
+- the `400` message for an unreadable body can include Java type names;
+- two concurrent creates of the same developer give one row, but the loser gets `500`
+  (unique constraint), not `409`.
 
 ### 13.2 Conventions
 
@@ -748,10 +874,31 @@ the earliest log per `session_id`.
 
 ```bash
 cd component-2-behaviour-tracker/backend && mvn test
-cd ../frontend && npm run build          # only if the frontend changed
+cd ../frontend && npm run build && npm test   # only if the frontend changed
 ```
 
 Report the actual result. Never commit failing tests, and never skip tests to get green.
+
+### 13.4 Test reports and the Quality page
+
+- Surefire writes JUnit XML to `backend/target/surefire-reports/`. `frontend/dev/surefireReport.mjs`
+  turns it into one report (totals, six categories, every test with status, duration and a
+  failure excerpt). It never copies Surefire's `<properties>` (JVM system properties) or
+  captured output.
+- `npm run test:report` writes it to `backend/target/quality-report.json` (git-ignored with
+  `target/`) and prints a summary.
+- The dashboard's `/quality` page reads it through `frontend/dev/qualityPlugin.mjs`, a Vite
+  plugin that exists only in `npm run dev`. Its run button starts one fixed command
+  (`mvn -B -ntp test -Dspring.profiles.active=test` in `backend/`). It accepts loopback,
+  same-origin requests that carry the `X-C2-Quality` header; takes no input; passes only an
+  allow-list of environment variables (no `DB_*`, no tokens); allows one run at a time; stops
+  after 10 minutes; keeps only the last 60 lines of output, with secrets and the home folder
+  masked. A run that cannot start, times out or ends without results is shown as a runner
+  error, not as failed tests.
+- The backend has no endpoint that runs tests. Do not add one.
+- A new test class is categorised by `CLASS_CATEGORY` in `surefireReport.mjs`. Unlisted
+  classes count as regression tests, and method names that mention `403`, `otherDeveloper`
+  or `intruder` count as authorization tests.
 
 ---
 
@@ -850,10 +997,12 @@ Adding an action is a **contract change**: C1 must send it, and C3 and C4 must i
 | Adding a NOT NULL column with `ddl-auto=update` | Startup fails on databases with rows | Nullable → backfill → constrain (§3.4) |
 | Changing classification thresholds in one place | The dashboard explains the wrong rule | Update `Badges.tsx` too (§7.3) |
 | Counting actions instead of distinct events | Rates over 100%; repeated clicks inflate fix rates | Use `eventIdsWithAction` (§7.1) |
+| Treating a `FIX` as a verified fix | Research results overstate how many vulnerabilities were really fixed | `fixRate` is claimed fixes; use `verifiedFixCount`/`verifiedFixRate` for evidence (§4.5) |
 | Treating `highSeverityFixRate = null` as 0 | Developers with no high-severity events are marked at risk | Keep the null semantics |
 | Committing the C1 local data JSON with C2 work | Pollutes another component's history | Check `git diff --stat` before committing |
 | Two Vite apps on port 5173 (C2 and C4 dashboards) | The second picks another port; the proxy confusion looks like a backend outage | Run one at a time, or set an explicit port |
 | Logging request bodies | Tokens or personal data in logs | Log ids and actions only |
+| Writing or updating a history row without `LifecycleHashChain.seal` | The verify endpoint reports `BROKEN` for honest data | Seal every new row; never update history rows (§5.5) |
 
 ---
 

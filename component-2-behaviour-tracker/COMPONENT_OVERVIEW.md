@@ -116,7 +116,8 @@ C2 *serves data for* these. It does not re-implement them.
 | **Security event** | One vulnerability detected by C1: type, severity, file, line, message, time of detection and current status. |
 | **Developer interaction** (a.k.a. behaviour log) | One action a developer took on one security event: `OPEN`, `FIX`, `IGNORE`, `DISMISS` or `REOPEN`, with time, session, source and metadata. Both names refer to the same `behaviour_logs` table. |
 | **Lifecycle status** | Where an event is now: `DETECTED`, `OPENED`, `IGNORED`, `REOPENED` or `FIXED`. |
-| **Lifecycle history** | Every status change of an event: from, to, when and by whom (`SYSTEM` or the developer). |
+| **Lifecycle history** | Every status change of an event: from, to, when and by whom (`SYSTEM` or the developer). The entries are hash-chained, so a later edit can be detected. |
+| **Claimed and verified fix** | A `FIX` from C1 is a *claim*: the developer used the Fix action, which shows the secure example. It is stored as `CLAIMED`. A fix is `VERIFIED` only when a verification source confirms the vulnerability is gone. No such source exists until C1 reports re-scan results, so every fix is `CLAIMED` today. |
 | **Response time** | Seconds from detection to an action (`time_since_detection_seconds`). |
 | **Repeated vulnerability** | Today: a vulnerability type that appears more than once for a developer. Planned: a link from a new detection to an earlier one of the same type in the same file. |
 | **Session** | One coding session in the extension. C1 generates a session id and sends it with every action. |
@@ -146,11 +147,11 @@ rejected, and nothing is stored.
 |---|---|
 | Identity | GitHub sign-in verified against GitHub's API. Existing records are found, linked or created, and a login already linked to a different GitHub account is refused. |
 | Recording | Security events, developer interactions, lifecycle history, response times, sessions and sources. |
-| Integrity | Lifecycle transitions are enforced. A developer can act only on their own events. Concurrent actions on one event are serialised with a database lock. |
-| Analysis | Opened, fixed, ignored, dismissed and reopened counts; fix, ignore, reopen and high-severity fix rates; average response time; repeated vulnerability count; classification. |
+| Integrity | Lifecycle transitions are enforced. A developer can act only on their own events. Concurrent actions on one event are serialised with a database lock. Lifecycle history is tamper-evident: a hash chain shows if an entry was later edited, deleted or reordered. This is tamper-evident, not tamper-proof: someone with full database access who knows the algorithm can rebuild the chain, and deleting the newest entries is not detected. |
+| Analysis | Opened, fixed, ignored, dismissed and reopened counts; fix, ignore, reopen and high-severity fix rates; average response time; repeated vulnerability count; classification. Fix counts and rates are *claimed* fixes; verified fixes are counted separately and stay at 0 until a verification source exists. |
 | API | 20+ endpoints with Swagger UI, validation and one consistent error format. |
-| Dashboard | Developer list, profile, security events, lifecycle timeline and behaviour analysis pages; light and dark themes. |
-| Quality | 93 automated tests on an in-memory database. |
+| Dashboard | Developer list, profile, security events, lifecycle timeline and behaviour analysis pages; a Quality & Regression Tests page with the latest test results; light and dark themes. |
+| Quality | 402 automated tests on an in-memory database: API contracts (including C1's exact requests), GitHub sign-in with GitHub mocked, ownership, every lifecycle transition, claimed versus verified fixes, hash-chain tampering, rollback, concurrency and the schema script. The dashboard shows the results of the latest run. |
 | Integration | The Sentinel extension sends real events and actions to C2. |
 
 ## 10. Behaviour classification at a glance
@@ -200,12 +201,11 @@ As of **17 October 2026**:
 - **Backend:** complete for T1, T2 and T5. Partial for T3 and T4.
 - **Dashboard:** working.
 - **C1 integration:** working.
-- **Open issues:**
-  - A repeated action that keeps the same status is rejected with `409`. Normal extension
-    use can trigger this, and the action is lost.
-  - Lifecycle-fix changes are not yet committed.
+- **Fixed on 20 October 2026:** a repeated action that keeps the same status (for example a
+  second `OPEN`) is now stored instead of being rejected with `409`.
 - **Next:**
-  1. Fix the open issues.
+  1. Bring the docs in line with the code (TASKS P1-2). The test gaps (P1-3) were closed by
+     the contract and regression suite (P1-5) on 20 October 2026.
   2. Complete T3 and T4 (repeated mistakes and session grouping).
   3. Provide behaviour history to C3 and an event export to C4.
 
