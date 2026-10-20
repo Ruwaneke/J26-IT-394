@@ -14,6 +14,9 @@ export type BehaviourAction =
   | 'DISMISS'
   | 'REOPEN';
 
+/** Set on FIX interactions only. A FIX is a claim; VERIFIED needs a verification source. */
+export type FixVerificationStatus = 'CLAIMED' | 'VERIFIED' | 'STILL_VULNERABLE';
+
 export interface Developer {
   id: number;
   developerIdentifier: string;
@@ -45,6 +48,7 @@ export interface DeveloperInteraction {
   sessionId?: string | null;
   source?: string | null;
   metadata?: string | null;
+  fixVerification?: FixVerificationStatus | null;
 }
 
 export interface LifecycleHistory {
@@ -54,6 +58,7 @@ export interface LifecycleHistory {
   newStatus: SecurityEventStatus;
   changedAt: string;
   changedBy: string | null;
+  entryHash?: string | null;
 }
 
 export interface DeveloperBehaviourSummary {
@@ -68,6 +73,9 @@ export interface DeveloperBehaviourSummary {
   ignoreRate: number | null;
   reopenRate: number | null;
   highSeverityFixRate: number | null;
+  /** Fixes confirmed by a verification source; fixedCount and fixRate count claimed fixes. */
+  verifiedFixCount: number;
+  verifiedFixRate: number | null;
   averageResponseTimeSeconds: number | null;
   repeatedVulnerabilityCount: number;
   behaviourClassification: string;
@@ -80,4 +88,57 @@ export interface ClassificationRule {
   icon: string;
   summary: string;
   rule: string;
+}
+
+// ── Quality & Regression Tests page (TASKS P1-5) ──────────────────────────────
+// Mirrors frontend/dev/surefireReport.mjs and qualityPlugin.mjs, not a backend DTO.
+
+export type TestCategoryId = 'api-contract' | 'auth' | 'lifecycle' | 'hash-chain' | 'database' | 'regression';
+
+export type TestCaseStatus = 'PASS' | 'FAIL' | 'ERROR' | 'SKIPPED';
+
+export interface TestCounts {
+  tests: number;
+  passed: number;
+  failed: number;
+  errors: number;
+  skipped: number;
+}
+
+export interface TestCaseResult {
+  id: string;
+  className: string;
+  simpleClassName: string;
+  name: string;
+  category: TestCategoryId;
+  status: TestCaseStatus;
+  durationSeconds: number;
+  failure: { type: string | null; message: string | null; stackTrace: string | null } | null;
+}
+
+export interface TestReport {
+  schemaVersion: number;
+  generatedAt: string;
+  executedAt: string | null;
+  source: string;
+  status: 'PASSED' | 'FAILED' | 'NO_TESTS';
+  totals: TestCounts & { durationSeconds: number; classes: number };
+  categories: (TestCounts & { id: TestCategoryId; label: string; description: string })[];
+  testCases: TestCaseResult[];
+}
+
+export interface TestRunState {
+  state: 'idle' | 'running' | 'passed' | 'failed' | 'runner-error';
+  reason: 'maven-not-found' | 'spawn-failed' | 'timeout' | 'no-test-results' | null;
+  message: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  outputTail: string[];
+}
+
+export interface QualityStatus {
+  runnerAvailable: boolean;
+  run: TestRunState;
+  report: TestReport | null;
 }

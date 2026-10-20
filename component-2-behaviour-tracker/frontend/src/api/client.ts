@@ -5,6 +5,8 @@ import {
   DeveloperInteraction,
   LifecycleHistory,
   DeveloperBehaviourSummary,
+  QualityStatus,
+  TestRunState,
 } from '../types';
 
 export class ApiError extends Error {
@@ -87,4 +89,68 @@ export const api = {
 
   getBehaviourSummary: (developerId: number | string, signal?: AbortSignal): Promise<DeveloperBehaviourSummary> =>
     get<DeveloperBehaviourSummary>(`/developer-behaviour/${developerId}`, signal),
+};
+
+// ── Quality & Regression Tests (TASKS P1-5) ───────────────────────────────────
+// Served by the Vite dev-server plugin (frontend/dev/qualityPlugin.mjs), not by the backend.
+// A production build has no such routes; the page then explains how to run the tests.
+
+const qualityClient = axios.create({
+  baseURL: '/__c2-quality',
+  timeout: 10000,
+  headers: {
+    Accept: 'application/json',
+  },
+});
+
+/** Thrown when the page is not served by the local dev server, so no reports can be read. */
+export class QualityUnavailableError extends Error {
+  constructor() {
+    super('Test reports are only available from the local dev server (npm run dev).');
+    this.name = 'QualityUnavailableError';
+  }
+}
+
+function isQualityStatus(data: unknown): data is QualityStatus {
+  return typeof data === 'object' && data !== null && (data as QualityStatus).runnerAvailable === true;
+}
+
+function normalizeQualityError(err: unknown): Error {
+  if (axios.isAxiosError(err)) {
+    const res = err.response;
+    if (!res || res.status === 404 || res.status === 405) {
+      return new QualityUnavailableError();
+    }
+    if (isErrorResponse(res.data)) {
+      return new ApiError(res.data.message, res.status);
+    }
+    return new ApiError(`Request failed with status ${res.status}.`, res.status);
+  }
+  return err instanceof Error ? err : new Error('Unexpected error.');
+}
+
+export const qualityApi = {
+  getStatus: async (signal?: AbortSignal): Promise<QualityStatus> => {
+    try {
+      const res = await qualityClient.get<unknown>('/report', { signal });
+      // A static host answers unknown paths with index.html; only the plugin returns this shape
+      if (!isQualityStatus(res.data)) throw new QualityUnavailableError();
+      return res.data;
+    } catch (err) {
+      if (err instanceof QualityUnavailableError) throw err;
+      throw normalizeQualityError(err);
+    }
+  },
+
+  startRun: async (): Promise<TestRunState> => {
+    try {
+      // The header marks the request as coming from this page; the plugin rejects runs without it
+      const res = await qualityClient.post<{ run: TestRunState }>('/run', null, {
+        headers: { 'X-C2-Quality': '1' },
+      });
+      return res.data.run;
+    } catch (err) {
+      throw normalizeQualityError(err);
+    }
+  },
 };
