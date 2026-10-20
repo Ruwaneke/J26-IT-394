@@ -1,5 +1,6 @@
 package com.sentinel.tracker.controller;
 
+import com.sentinel.tracker.dto.HistoryVerificationResponse;
 import com.sentinel.tracker.dto.LifecycleHistoryResponse;
 import com.sentinel.tracker.service.VulnerabilityLifecycleHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,5 +26,14 @@ public class LifecycleHistoryController {
 
         return ResponseEntity.ok(
                 lifecycleHistoryService.getHistoryBySecurityEvent(securityEventId));
+    }
+
+    @GetMapping({"/security-event/{securityEventId}/verify", "/{securityEventId}/verify"})
+    @Operation(summary = "Verify that a security event's lifecycle history has not been altered",
+            description = "Recomputes the history's hash chain. VALID: intact. BROKEN: edited, deleted or "
+                    + "reordered after it was written (see brokenAtEntry). UNCHAINED: some entries predate the "
+                    + "hash chain and cannot be verified. Tamper-evident, not tamper-proof.")
+    public ResponseEntity<HistoryVerificationResponse> verifyHistory(@PathVariable Long securityEventId) {
+        return ResponseEntity.ok(lifecycleHistoryService.verifyHistory(securityEventId));
     }
 }

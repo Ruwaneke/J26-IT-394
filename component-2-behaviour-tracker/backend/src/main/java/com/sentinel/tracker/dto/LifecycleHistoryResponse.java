@@ -20,6 +20,7 @@ public class LifecycleHistoryResponse {
     private SecurityEventStatus newStatus;
     private LocalDateTime changedAt;
     private String changedBy;
+    private String entryHash;
     private LocalDateTime createdAt;
 
     /**
@@ -33,6 +34,7 @@ public class LifecycleHistoryResponse {
                 .newStatus(history.getNewStatus())
                 .changedAt(history.getChangedAt())
                 .changedBy(history.getChangedBy())
+                .entryHash(history.getEntryHash())
                 .createdAt(history.getCreatedAt())
                 .build();
     }
