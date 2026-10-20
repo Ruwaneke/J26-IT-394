@@ -84,6 +84,52 @@ mvn test
 
 Tests use an H2 in-memory database (`src/test/resources/application-test.properties`), so PostgreSQL is not needed to run them.
 
+#### Tests and test reports
+
+The suite (402 test methods in 32 classes, TASKS P1-5 and P1-6) has six groups. The dashboard's
+**Quality & Regression Tests** page shows them the same way:
+
+| Group | Main classes | What it checks |
+|---|---|---|
+| API contract | `*ApiContractTest`, `*ControllerTest` | Every endpoint on the real stack: C1's exact request bodies, validation, invalid JSON, enums, ranges, ISO-8601 timestamps, status codes and the `ApiErrorResponse` format |
+| Authentication & authorization | `GitHubAuthApiContractTest`, `GitHubAuthServiceTest` | Sign-in with GitHub's `GET /user` answered by `MockRestServiceServer` (no real token or network): `400`, `401`, `502`, `409`, client identity fields ignored, token never logged; event ownership `403` |
+| Lifecycle transitions | `LifecycleTransitionIntegrationTest`, `SecurityEventStatusTest`, `FixVerification*Test` | All 25 status × action pairs, history rows (from, to, time, actor), nothing stored on `409`; claimed versus verified fixes |
+| Hash-chain integrity | `LifecycleHistoryVerificationIntegrationTest`, `LifecycleHashChainEdgeCaseIntegrationTest`, `VulnerabilityLifecycleHistoryServiceTest` | Tampering cases, legacy rows (`UNCHAINED`), empty history (`BROKEN`) |
+| Database consistency | `WriteFailureRollbackIntegrationTest`, `ConcurrentInteractionIntegrationTest`, `SchemaCompatibilityTest`, `*RepositoryTest` | Rollback when a write fails, concurrent actions on one event, `schema.sql` against the entities |
+| Regression | the other service tests | Behaviour analysis, developers, security events |
+
+Every test uses its own H2 rows and deletes them afterwards; no test can reach PostgreSQL.
+The hash-chain tests show what the chain detects (edited, deleted, inserted, reordered or
+re-hashed entries) and what it does not (deleting the newest entries, or rebuilding the whole
+chain with database access). It is tamper-evident, not tamper-proof.
+
+Useful commands:
+
+```bash
+mvn test -Dtest=LifecycleTransitionIntegrationTest   # one class
+mvn test -Dtest='*ApiContractTest'                    # a group of classes
+cd ../frontend && npm run test:report                 # summary + target/quality-report.json
+```
+
+Raw results are in `target/surefire-reports/` (JUnit XML). `npm run test:report` turns them
+into `target/quality-report.json`. With `npm run dev`, the page at
+http://localhost:5173/quality shows the same report, and its **Run test suite** button runs
+`mvn -B -ntp test -Dspring.profiles.active=test` here. This is only possible on the local dev
+server. It takes no input from the browser, passes no database credentials, allows one run
+at a time and stops after 10 minutes. The backend itself has no endpoint that runs tests.
+
+Troubleshooting:
+
+| Symptom | Cause and fix |
+|---|---|
+| Page says "Test reports are not available here" | The page is served by a production build or `vite preview`. Use `npm run dev`, or the terminal commands above. |
+| Page says "No test report yet" | `target/surefire-reports/` is empty. Run the suite. |
+| "Maven not found" | `mvn` is not on the `PATH` of the terminal that started `npm run dev`. Install Maven and Java 17, then restart the dev server. |
+| "Build failed before the tests ran" | Maven ended without test results, usually a compile error. The page shows Maven's last lines; run `mvn test` in a terminal for the full output. |
+| A test fails only on one machine | Check the Java version (`java -version` must be 17+). The tests do not depend on PostgreSQL, the network or the time zone. |
+| Old results still shown | The page reads whatever is in `target/surefire-reports/`. A run from the page clears it first; after a terminal run, select **Refresh results**. |
+| Results mix two runs | `mvn test -Dtest=…` only rewrites the reports of the classes it ran. Run the whole suite (or `mvn clean test`) before reading the report. |
+
 ## API Endpoints
 
 ### Auth
@@ -142,6 +188,7 @@ endpoints above also return actions recorded as developer interactions.
 | Method | Path                                                     | Description                              |
 |--------|----------------------------------------------------------|------------------------------------------|
 | GET    | `/api/lifecycle-history/security-event/{securityEventId}` | Status history of a security event      |
+| GET    | `/api/lifecycle-history/security-event/{securityEventId}/verify` | Check the history's hash chain: `VALID`, `BROKEN` or `UNCHAINED` |
 | GET    | `/api/developer-behaviour/{developerId}`                 | Behaviour summary and classification     |
 
 ## Example Requests
@@ -181,6 +228,7 @@ curl -X POST http://localhost:8080/api/developer-interactions \
 | `Severity`            | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`             |
 | `BehaviourAction`     | `OPEN`, `IGNORE`, `FIX`, `REOPEN`, `DISMISS`    |
 | `SecurityEventStatus` | `DETECTED`, `OPENED`, `IGNORED`, `REOPENED`, `FIXED` |
+| `FixVerificationStatus` | `CLAIMED`, `VERIFIED`, `STILL_VULNERABLE` (FIX interactions only) |
 
 ## Vulnerability Lifecycle
 
@@ -206,9 +254,39 @@ An action that would make any other change (for example `OPEN` on a `FIXED` even
 `409 Conflict` and nothing is recorded. An action that keeps the current status (for example a second
 `OPEN`) is still logged but adds no history entry.
 
+### Claimed and verified fixes
+
+A `FIX` is a **claim**, not proof. C1 sends it when the developer uses the Fix code action,
+which shows the secure example; nothing re-checks the code. The event still moves to `FIXED`
+(the lifecycle records what the developer reported), and the interaction carries
+`fixVerification`:
+
+| Value | Meaning |
+|---|---|
+| `CLAIMED` | The developer reported a fix; nothing confirmed it. Every FIX is `CLAIMED` today. |
+| `VERIFIED` | A verification source confirmed the vulnerability is gone. |
+| `STILL_VULNERABLE` | A verification source found it still present. The claim is still accepted (`201`). |
+
+Other actions have `fixVerification: null`. The value comes from `FixVerificationService`. Until
+C1 reports whether a finding is still present after a fix, the only implementation
+(`ClaimOnlyFixVerificationService`) returns `CLAIMED`; tests replace it with controlled mock
+results. FIX logs written before this existed are marked `CLAIMED` by `schema.sql`.
+
+### Tamper-evident history
+
+The history entries of each event form a SHA-256 hash chain: every entry stores `prevHash` (the
+previous entry's hash) and `entryHash` (a hash over `prevHash` and its own fields). If anyone
+later edits, deletes or reorders an entry in the database, `GET
+/api/lifecycle-history/security-event/{id}/verify` reports `BROKEN` and the first entry that
+fails. Entries written before the chain existed have no hashes and are reported as `UNCHAINED`.
+This is tamper-evident, not tamper-proof: someone with database access who knows the algorithm
+can rebuild the chain, and deleting the newest entries is not detected. Details: TECHNICAL_OVERVIEW §5.5.
+
 ## Behaviour Summary
 
 `GET /api/developer-behaviour/{developerId}` returns counts (opened, fixed, ignored, dismissed, reopened), rates (fix, ignore, reopen, high-severity fix), average response time in seconds, repeated vulnerability count, and an overall `behaviourClassification`.
+
+`fixedCount` and `fixRate` count **claimed** fixes (any `FIX`), and the classification uses them. `verifiedFixCount` and `verifiedFixRate` count only events with a `VERIFIED` fix, so they stay `0` until a verification source exists.
 
 ## Error Handling
 

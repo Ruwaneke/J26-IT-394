@@ -8,7 +8,7 @@ Read [COMPONENT_OVERVIEW.md](COMPONENT_OVERVIEW.md) for *why* and
 [TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md) for *how*. The technical overview's
 non-negotiable rules (§0) and definition of done (§17) apply to every task below.
 
-**Owner:** R S D Sulakshana (IT23249752) · **Last reviewed:** 17 October 2026
+**Owner:** R S D Sulakshana (IT23249752) · **Last reviewed:** 20 October 2026
 
 ---
 
@@ -45,20 +45,18 @@ a reason).
 | T5 Behaviour summaries | ✅ Done |
 
 **Uncommitted work on the branch:**
-- the `@EntityGraph` fix in `BehaviourLogRepository` and `BehaviourLogServiceImpl`;
 - the untracked `generate-test-data.sh`;
 - changes to C1's `sentinel/src/data/*.json`. **These are not C2 files; do not commit them
   with C2 work.**
 
-**Biggest live issue:** a second `OPEN` on the same finding gets `409`, so real behaviour
-from the extension is lost silently (P1-1).
+**Fixed 2026-10-20:** a second `OPEN` on the same finding no longer gets `409` (P1-1).
 
 ---
 
 ## Phase 0 · Housekeeping
 
 ### P0-1 · Commit the lazy-loading fix for behaviour-log reads
-- [ ] Status
+- [x] Done 2026-10-20
 
 **Why.** With `open-in-view=false`, mapping a log's developer or event outside a loaded
 graph throws `LazyInitializationException` (a `500`). The fix is written but not committed.
@@ -113,7 +111,7 @@ mention in the message.
 ## Phase 1 · Correctness
 
 ### P1-1 · Accept same-status actions without a lifecycle entry
-- [ ] Status
+- [x] Done 2026-10-20
 
 **Why.** C1 sends `OPEN` both when an explanation is viewed and when a secure example is
 viewed. The second one has the same target status, gets `409`, and is dropped silently by
@@ -164,7 +162,7 @@ code, and the reverse.
 **Depends on.** P1-1.
 
 ### P1-3 · Close the test gaps
-- [ ] Status
+- [x] Done 2026-10-20 (as part of P1-5)
 
 **Do**
 1. `DeveloperInteractionServiceImpl` unit tests (Mockito):
@@ -207,12 +205,86 @@ updated.
 **Done when.** Every action sent by C1 is stored, and the record is committed.
 **Depends on.** P1-1.
 
+### P1-5 · API contract and regression test suite, with a test report page
+- [x] Done 2026-10-20
+
+**Why.** The frozen C1 → C2 contract, the lifecycle rules and the P2-9 hash chain are only
+partly covered by tests, and `POST /api/auth/github` and `/api/developers` have no API-level
+tests at all. The owner asked (20 October 2026) for a contract and regression suite, and for
+the results to be visible in the dashboard. This task also does P1-3's steps (marked below).
+
+**Do**
+1. Contract tests on the real stack (`@SpringBootTest` + H2) for every endpoint in
+   TECHNICAL_OVERVIEW §8.1: success shapes, the C1 request bodies exactly as C1 sends them,
+   missing, blank, malformed and out-of-range values, invalid enums, invalid JSON, ISO-8601
+   timestamps, status codes and the `ApiErrorResponse` format. Assert current behaviour; do
+   not change any API to make a test pass.
+2. GitHub sign-in through the real controller with GitHub's HTTP mocked
+   (`MockRestServiceServer`; no real token): `400`, `401`, `502` (5xx, rate limit, network
+   failure, incomplete profile), new, returning and legacy developers, the `409` conflict,
+   client-supplied identity fields ignored, the token never echoed or logged.
+3. Ownership: `403` before `409`, and nothing stored on `403` or `404`.
+4. Lifecycle: all 25 status × action pairs on the real stack (transition, same-status or
+   `409`), with the history row's from, to, `changedAt` and `changedBy`, and nothing stored on
+   `409`. A table-driven `SecurityEventStatus` test of all 25 status pairs (P1-3 step 2).
+5. Hash chain (P2-9): unit tests of the verification policy, and H2 cases not yet covered
+   (altered hash values, missing `DETECTED` entry, an entry moved to another event, separate
+   chains per event, client timestamps out of order, a legacy event with no history). The
+   policy is unchanged: no history is `BROKEN`, legacy rows are `UNCHAINED`.
+6. Database consistency: a failing history write rolls back the event or the action;
+   concurrent actions on one event keep the status, history and chain consistent; repository
+   queries; `schema.sql` matches the entity mappings and can be re-run.
+7. P1-3 step 1 and 3: `DeveloperInteractionServiceImpl` rules (Mockito) and
+   `VulnerabilityLifecycleHistoryService` (oldest first, `404`).
+8. A machine-readable report from Surefire's XML (`npm run test:report`), and a **Quality &
+   Regression Tests** page in the dashboard that shows it. Running the suite from the page is
+   only possible on the local Vite dev server: one fixed command (`mvn -B test`), no
+   arguments from the browser, one run at a time, a timeout, and no database credentials
+   passed on. No backend endpoint runs tests.
+9. Docs: TECHNICAL_OVERVIEW §11 and §13, `backend/README.md`, COMPONENT_OVERVIEW §9.
+
+**Done when.** `mvn test` passes with the new tests, `npm run build` and `npm test` pass, and
+the page shows the results of a real run.
+**Depends on.** P1-1, P2-9.
+
+### P1-6 · Tell claimed fixes apart from verified fixes
+- [x] Done 2026-10-20
+
+**Why.** C1 sends `FIX` when the developer uses the Fix code action, which only shows the
+secure example (`sentinel/src/extension.ts`, `handleFixAction`). C2 moved the event to
+`FIXED` and counted it in `fixRate` as if the code had been fixed. Found by a review of the
+lifecycle state machine requested by the owner (20 October 2026).
+
+**Do**
+1. Add `FixVerificationStatus` (`CLAIMED`, `VERIFIED`, `STILL_VULNERABLE`) and a nullable
+   `behaviour_logs.fix_verification` (entity, `schema.sql` `CREATE TABLE` and `ALTER TABLE`,
+   and a re-runnable update that marks older `FIX` rows `CLAIMED`).
+2. Add `FixVerificationService`, with `ClaimOnlyFixVerificationService` returning `CLAIMED`
+   until a verification source exists. Call it from `createInteraction` for `FIX` only; a
+   `null` answer is `CLAIMED`.
+3. Keep the lifecycle and the C1 contract unchanged: `FIX` still moves to `FIXED` with `201`,
+   also when the result is `STILL_VULNERABLE`.
+4. Add `fixVerification` to `DeveloperInteractionResponse`, and `verifiedFixCount` and
+   `verifiedFixRate` to the behaviour summary (additive). Keep `fixRate` and the
+   classification unchanged (a change needs the supervisor, TECHNICAL_OVERVIEW §7.3).
+5. Tests with controlled mock verification results: service rules (Mockito), the real stack
+   with C1's bodies (`@SpyBean`), analysis, schema re-run.
+6. Docs: TECHNICAL_OVERVIEW §3.2, §4.5, §5.2, §7.1, §13.1, §16; `backend/README.md`;
+   COMPONENT_OVERVIEW; root `README.md`; frontend `types.ts`.
+7. 📝 Ask C1's owner to report whether a finding is still present after a fix (see "Notify
+   other components"). Do not edit `sentinel/`.
+
+**Done when.** Every `FIX` stores a verification value, nothing reports `VERIFIED` without a
+source, the C1 contract and lifecycle are unchanged, and the tests pass.
+**Depends on.** P1-1.
+
 ---
 
 ## Phase 2 · Complete TAF tasks T3 and T4 (repeated mistakes and sessions)
 
 This is the core research work still left for C2. New analysis code goes in the `analysis/`
-package (TECHNICAL_OVERVIEW §1.2).
+package (TECHNICAL_OVERVIEW §1.2). P2-9 (tamper-evident history) is outside T3 and T4. It is
+a research addition from the Component 2 Enhancement Guide, and needs only P1-1.
 
 ### P2-1 · Decide the definition of a "repeated mistake" 🔐 supervisor
 - [ ] Status
@@ -381,6 +453,70 @@ weekly aggregates. Forecasting stays in C4.
 
 **Done when.** All three views work against the synthetic dataset and the build passes.
 **Depends on.** P2-4, P2-5, P2-6, P2-7.
+
+### P2-9 · Tamper-evident lifecycle history (hash chain)
+- [x] Done 2026-10-20
+
+**Why.** Anyone with database access can edit a history row (for example `IGNORED` →
+`FIXED`) and the timeline still looks normal. For behaviour data used as research evidence,
+C2 must be able to show when history was altered. This is Upgrade 1 of the Component 2
+Enhancement Guide (18 October 2026). It is internal to C2: no C1, C3 or C4 change.
+
+**Do**
+1. Add `prev_hash` and `entry_hash` (`VARCHAR(64)`, nullable) to
+   `vulnerability_lifecycle_history`:
+   - in `VulnerabilityLifecycleHistory`;
+   - in `schema.sql`, both `CREATE TABLE` and `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
+2. Add a small hasher in `analysis/` (or `util/`), for example `LifecycleHashChain`:
+   - `entryHash = SHA-256(prevHash | securityEventId | previousStatus | newStatus |
+     changedAt | changedBy)`, hex-encoded, with a fixed field separator and `null` written
+     as an empty string;
+   - the first entry of each event uses a fixed genesis value as `prevHash`;
+   - truncate `changedAt` to microseconds before it is saved and hashed. PostgreSQL rounds
+     finer values, so truncating only for the hash is not enough.
+3. Set both hashes wherever a history row is written, inside the existing transaction:
+   - `SecurityEventServiceImpl.createSecurityEvent` (the `DETECTED` row, genesis
+     `prevHash`);
+   - `DeveloperInteractionServiceImpl.createInteraction` (transitions). `prevHash` is the
+     `entryHash` of the event's latest row, read while the existing pessimistic lock is held,
+     so two concurrent actions cannot fork the chain.
+   Same-status actions (P1-1) still write no history row and so do not touch the chain.
+4. Add `GET /api/lifecycle-history/security-event/{securityEventId}/verify`:
+   - recomputes the chain, oldest first;
+   - walks the rows in id (insertion) order, not `changed_at` order, because `changed_at`
+     comes from the client and need not increase;
+   - returns `status` (`VALID`, `BROKEN`, or `UNCHAINED` for rows written before this task),
+     `entryCount`, `unchainedEntryCount`, `brokenAtEntry`, `brokenAtHistoryId` and `reason`
+     (null unless `BROKEN`), and `verifiedAt`;
+   - `404` for an unknown event.
+   Rows written before this task have null hashes. Report them as `UNCHAINED`; do not
+   backfill them, because that would vouch for history that was never protected.
+5. Add `entryHash` to `LifecycleHistoryResponse` (additive).
+6. Tests:
+   - hasher: same input gives same hash; changing any field changes it; microsecond
+     truncation;
+   - service: the first row uses the genesis value; each later row's `prevHash` equals the
+     previous `entryHash`;
+   - verify, as an integration test on H2, one case per tampering type: an edited status
+     in a middle entry, an edited timestamp, a deleted middle entry, two reordered entries,
+     and no tampering. Each must give `BROKEN` at the expected entry, or `VALID`;
+   - legacy rows with null hashes → `UNCHAINED`;
+   - record the extra write time per history row (ms) for the evaluation (P4-3).
+7. Document it:
+   - TECHNICAL_OVERVIEW §3.2 (columns), §5.1 and §5.2 (write paths), §8.1 (endpoint),
+     §13.1 (test count);
+   - `backend/README.md`;
+   - the frontend `types.ts` if the dashboard shows it;
+   - state the limit in COMPONENT_OVERVIEW: the history is tamper-*evident*, not
+     tamper-proof. Someone with full database access who knows the algorithm can rebuild
+     the chain, and deleting the newest entries is not detected without an outside anchor.
+8. 📝 Optional follow-up: write up an outside anchor (storing each chain's latest hash
+   outside the database) as a proposal in `docs/proposals/`. Do not build it in this task.
+
+**Done when.** Every new history row is chained. The verify endpoint detects all four
+tampering cases at the right entry and returns `VALID` for untouched history. Tests pass,
+and the docs state the tamper-evident limit.
+**Depends on.** P1-1. It does not depend on P2-1 to P2-8 and can be taken before them.
 
 ---
 
@@ -583,6 +719,11 @@ copy of an existing database.
 - Classification thresholds from data rather than design, once real data exists.
 - Developer comparison or team views in the dashboard (check overlap with C4 first).
 - Export the dashboard's views as a PDF report.
+- Map Spring MVC's own errors to their 4xx codes in `GlobalExceptionHandler`: a non-numeric
+  path id, an unknown route, a wrong `Content-Type` and a wrong method now return `500`
+  (found by P1-5). Changes status codes clients see, so agree it first. Also: a concurrent
+  duplicate developer gets `500` instead of `409`; `400` messages for unreadable bodies can
+  show Java type names; timestamps ending in `Z` lose their zone while `+05:30` is rejected.
 
 ---
 
@@ -614,6 +755,8 @@ their code.
 | C1 · M H S Perera | `sentinel.ifeUrl` defaults to `http://localhost:4000` (`/api/feedback/request`), but C3 runs on 8083 with no REST API yet | Not sent |
 | C1 · M H S Perera | Two different actions (explanation viewed, example viewed) both map to `OPEN`; C2 will accept repeats after P1-1, but the distinction only survives in metadata | For info |
 | C4 · D S Gayanatha | C2 and C4 dashboards both use Vite port 5173 | For info |
+| C1 · M H S Perera | 📝 `FIX` is sent when the Fix action shows the secure example, not after the code changed. Please report whether the finding is still present after a fix (for example a re-scan result for the event), so C2 can mark fixes `VERIFIED` or `STILL_VULNERABLE` (P1-6) | Not sent |
+| C1 · M H S Perera | `sentinel/README.md` shows `POST /api/auth/github` with `githubId`/`githubUsername`/`email`; C1's code and C2 use `{"githubAccessToken"}` | For info |
 
 ---
 
@@ -624,4 +767,13 @@ found.
 
 | Date | Entry |
 |---|---|
+| 2026-10-20 | P1-6 done (added the same day at the owner's request, after a review of the lifecycle state machine): every `FIX` stores `fixVerification` (`CLAIMED` unless a verification source says otherwise); `ClaimOnlyFixVerificationService` is the only source, so every fix is `CLAIMED`; tests use controlled mock results. Lifecycle, C1 contract, `fixRate` and classification unchanged; `verifiedFixCount`/`verifiedFixRate` added. 20 new test methods in 2 new classes and 2 existing ones (382 → 402, all pass); with the stored value removed, 10 of the 17 new write-path tests fail. Review result for the other points: transitions, `409`, the `DETECTED` entry, history fields, transactions and tests were already in place. Exact duplicate deliveries (a C1 retry after a timeout) are stored as a second log because no request id exists; a dedup key would need C1 to send one. |
+| 2026-10-20 | Plan changed: added P1-6 (claimed versus verified fixes), requested by the owner. |
+| 2026-10-20 | P1-5 done (added the same day at the owner's request; P1-3's steps are part of it and P1-3 is ticked): 254 new test methods in 14 classes (128 → 382, all pass, `mvn test` about 8 s of Maven time). Contract tests run on the real stack with C1's exact bodies; GitHub is mocked with `MockRestServiceServer`. Checked that the new tests fail when the lifecycle, the row lock or `schema.sql` are broken. Dashboard: `/quality` page reading Surefire's XML through a dev-server-only Vite plugin (fixed `mvn test`, no input, no credentials passed, one run at a time, 10 min limit); `npm run test:report` writes `backend/target/quality-report.json`; `npm test` (Node's built-in runner, 10 tests) covers the report reader and the runner's guards. No API, lifecycle, schema or hash-chain policy was changed. Found and left as is (backlog): several Spring MVC errors give `500` instead of 4xx; see TECHNICAL_OVERVIEW §13.1. |
+| 2026-10-20 | Plan changed: added P1-5 (API contract and regression test suite, with a test report page), requested by the owner. |
+| 2026-10-20 | P2-9 done: lifecycle history is hash-chained (`analysis/LifecycleHashChain`), and `GET /api/lifecycle-history/security-event/{id}/verify` reports `VALID`/`BROKEN`/`UNCHAINED`. Tamper tests on H2: edited status, edited timestamp, deleted, reordered, re-hashed and hash-stripped rows are all `BROKEN` at the expected entry; untouched history is `VALID`; deleting the newest row is not detected (documented limit, outside anchor still 📝). Cost on H2, in-process: about 0.17 ms extra per history write (latest-row read + hash); verifying 205 rows took about 5 ms (one run, indicative only; measure on PostgreSQL for P4-3). Changes to the task as written: the chain follows id order, `changed_at` is truncated before saving (not only before hashing), `detected_at` is truncated too, and the response adds `unchainedEntryCount` and `reason`. 128 tests pass; frontend build passes. |
+| 2026-10-20 | Plan changed: added P2-9, a tamper-evident lifecycle history (Upgrade 1 of the Component 2 Enhancement Guide). The guide's other upgrades are not in the plan yet. U2, U3 and U6 need C1 changes. U4 and U5 touch C4's scope (COMPONENT_OVERVIEW §6). |
+| 2026-10-20 | P1-1 done: same-status actions are logged with `201`, no status change, no history row. Controller test step done as `DeveloperInteractionFlowIntegrationTest` (real stack on H2) instead of a mocked-service MockMvc test, which could not detect the change. Note: repeated logs still count towards `averageResponseTimeSeconds` and the `INSUFFICIENT_DATA` action count (TECHNICAL_OVERVIEW §4.4). 105 tests pass. |
+| 2026-10-20 | P0-1 done: the `@EntityGraph` fix was already committed in `70aeb8e`; added `BehaviourLogRepositoryTest` (fails if a graph is removed). |
+| 2026-10-17 | System integration guide written at `docs/architecture/INTEGRATION.md`. P3-1/P3-2 (I3) and P3-3..P3-5 (I4) follow its §7–§8 and open decisions D1, D3–D8. |
 | 2026-10-17 | Plan created. T1, T2 and T5 done; T3 and T4 partial. Open issue: same-status actions get 409 (P1-1). |

@@ -303,7 +303,7 @@ instrument.
 | `developers` | One row per developer, linked to GitHub | `developer_identifier` (unique), `github_id` (unique), `github_username`, `email` |
 | `security_events` | One row per detected vulnerability | `developer_id`, `vulnerability_type`, `severity`, `file_name`, `line_number`, `message`, `detected_at`, `current_status` |
 | `behaviour_logs` | One row per developer action | `developer_id`, `security_event_id`, `action_type`, `timestamp`, `time_since_detection_seconds`, `session_id`, `source`, `context_metadata` |
-| `vulnerability_lifecycle_history` | One row per status change | `security_event_id`, `previous_status`, `new_status`, `changed_at`, `changed_by` |
+| `vulnerability_lifecycle_history` | One row per status change, hash-chained per event | `security_event_id`, `previous_status`, `new_status`, `changed_at`, `changed_by`, `prev_hash`, `entry_hash` |
 
 All tables have audit timestamps (JPA auditing) and indexes on the developer, event, time,
 type, severity and status columns. Deleting a developer cascades to their events; deleting
@@ -328,10 +328,14 @@ all in one transaction:
 3. Map the action to a target status: `OPEN → OPENED`, `FIX → FIXED`,
    `IGNORE`/`DISMISS → IGNORED`, `REOPEN → REOPENED`.
 4. **Validate the transition** against the lifecycle in [section 4.3](#43-the-vulnerability-lifecycle-c2).
-   Any other change, including a repeat of the current status, is rejected with `409` and
-   nothing is stored.
-5. Compute `time_since_detection_seconds`, save the behaviour log, update the event's
-   status and append a lifecycle history entry with `changed_by` = the developer.
+   Any other change is rejected with `409` and nothing is stored. An action that keeps the
+   current status (a second `OPEN`, or `DISMISS` after `IGNORE`) is not a transition: it is
+   accepted.
+5. Compute `time_since_detection_seconds` and save the behaviour log. A `FIX` is stored as
+   a claim with `fixVerification` (`CLAIMED` unless a verification source says `VERIFIED`
+   or `STILL_VULNERABLE`; no source exists yet, so it is `CLAIMED`). If the status
+   changes, update the event's status and append a lifecycle history entry with
+   `changed_by` = the developer; a same-status action adds no history entry.
 
 Creating a security event writes its first lifecycle entry (`null → DETECTED`, changed by
 `SYSTEM`) in the same transaction.
@@ -344,7 +348,7 @@ Creating a security event writes its first lifecycle entry (`null → DETECTED`,
   owned by the developer, so repeated actions on one event count once and every rate stays
   within 0–100%.
 - **Rates** (percent of the developer's events, one decimal):
-  - fix rate;
+  - fix rate (claimed fixes), and separately the verified fix count and rate;
   - ignore rate (ignored or dismissed, counted once per event);
   - reopen rate;
   - high-severity fix rate over HIGH and CRITICAL events (`null` if the developer has
@@ -391,6 +395,7 @@ No database connection is held while waiting for GitHub.
 | GET | `/api/behaviour-logs`, `/{id}`, `/developer/{developerId}` | Read behaviour logs (same table as interactions) |
 | POST | `/api/behaviour-logs` | **Deprecated.** Same logic as interactions; responds with `Deprecation: true` and a `Link` header |
 | GET | `/api/lifecycle-history/security-event/{securityEventId}` | Status history of an event |
+| GET | `/api/lifecycle-history/security-event/{securityEventId}/verify` | Check that the event's history was not altered (`VALID`, `BROKEN`, `UNCHAINED`) |
 | GET | `/api/developer-behaviour/{developerId}` | Behaviour summary and classification |
 
 **Errors** go through one `GlobalExceptionHandler` and return an `ApiErrorResponse`:
@@ -416,12 +421,16 @@ for exploring the tracker's data. In development, Vite proxies `/api` to
 | `/developers/:developerId/security-events` | Security events |
 | `/developers/:developerId/lifecycle` | Lifecycle timeline |
 | `/developers/:developerId/behaviour` | Behaviour analysis |
+| `/quality` | Quality & Regression Tests: results of the latest backend test run (local dev server only) |
 
 The app supports light and dark themes.
 
-**Tests.** 93 test methods in 11 classes, covering repositories, services, controllers,
-GitHub auth (with a mocked GitHub client), lifecycle transitions and behaviour analysis.
-They run against H2 in memory, so no PostgreSQL is needed.
+**Tests.** 402 test methods in 32 classes: API contracts for every endpoint (including the
+exact requests C1 sends), GitHub sign-in with GitHub's HTTP mocked, ownership, all 25 lifecycle
+status × action pairs, claimed versus verified fixes, hash-chain tampering, rollback on failed writes, concurrent actions and
+`schema.sql` against the entities. They run against H2 in memory, so no PostgreSQL is needed.
+`npm run test:report` in `frontend/` summarises the last run; see
+[`backend/README.md`](component-2-behaviour-tracker/backend/README.md#tests-and-test-reports).
 
 **Tech stack.**
 - **Backend:** Java 17 · Spring Boot 3.3.5 (Web, Data JPA, Validation) · Hibernate ·
@@ -661,7 +670,7 @@ C1's `INFO` severity is sent to C2 as `LOW`, because C2 has no `INFO` level.
 | `DETECTED` | `POST /api/security-events` | `DETECTED` |
 | `WARNING_SHOWN` | not sent | — |
 | `EXPLANATION_VIEWED`, `SECURE_EXAMPLE_VIEWED` | `OPEN` | `OPENED` |
-| `FIX_APPLIED`, `FIXED` | `FIX` | `FIXED` |
+| `FIX_APPLIED`, `FIXED` | `FIX` | `FIXED` (a claimed fix, `fixVerification: CLAIMED`) |
 | `IGNORED`, `MARKED_FALSE_POSITIVE` | `IGNORE` | `IGNORED` |
 | `DISMISSED` | `DISMISS` | `IGNORED` |
 | `REOPEN` | `REOPEN` | `REOPENED` |
@@ -857,7 +866,7 @@ The full integration path is the remaining work.
 | Component | State |
 |---|---|
 | C1 | Working: real-time SQLi, XSS and secrets detection (57 patterns); editor diagnostics and code actions; GitHub sign-in; role-based dashboards; event reporting to C2. OWASP Top 10 rules and Neon storage in progress on `hishen_dev`. |
-| C2 | Working: full REST API, enforced lifecycle, behaviour analysis and classification, GitHub verification, dashboard, 93 tests. Connected to C1. |
+| C2 | Working: full REST API, enforced lifecycle, behaviour analysis and classification, GitHub verification, tamper-evident lifecycle history, claimed versus verified fixes, dashboard, 402 tests with a test report page. Connected to C1. |
 | C3 | Scoring, escalation and templates done with tests. Recommendation generator, engine integration and REST API scheduled for 17–20 October 2026. |
 | C4 | Full pipeline, dashboard and report working on simulated data. The ingest adapter for real C2 data is planned. |
 
@@ -865,14 +874,12 @@ The full integration path is the remaining work.
 
 - C1's `sentinel.ifeUrl` defaults to `http://localhost:4000` and calls
   `/api/feedback/request`. C3 runs on port 8083 and does not expose a REST API yet.
-- C2 rejects an action that keeps the current status (`409`). C1 sends `OPEN` both for
-  viewing an explanation and for viewing a secure example, so the second of those clicks
-  on the same finding is rejected and dropped after retries.
-- C2's backend README says such a repeated action is "logged but adds no history entry".
-  The code does not do this.
 - C4 reads simulated events. Mapping C2 data into the C4 event schema is not built yet.
 - C3's `BehaviourHistory` (earlier findings, fixes and ignores) is not yet filled from C2's
   behaviour summary.
+- C1 sends `FIX` when the developer uses the Fix action, without re-checking the code. C2
+  stores every fix as `CLAIMED`; verified fixes need C1 to report whether the finding is
+  still present after a fix.
 
 ## 12. Team
 
