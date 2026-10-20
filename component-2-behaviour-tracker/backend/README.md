@@ -86,7 +86,7 @@ Tests use an H2 in-memory database (`src/test/resources/application-test.propert
 
 #### Tests and test reports
 
-The suite (402 test methods in 32 classes, TASKS P1-5 and P1-6) has six groups. The dashboard's
+The suite (432 test methods in 34 classes, TASKS P1-5, P1-6 and P2-10) has six groups. The dashboard's
 **Quality & Regression Tests** page shows them the same way:
 
 | Group | Main classes | What it checks |
@@ -96,7 +96,7 @@ The suite (402 test methods in 32 classes, TASKS P1-5 and P1-6) has six groups. 
 | Lifecycle transitions | `LifecycleTransitionIntegrationTest`, `SecurityEventStatusTest`, `FixVerification*Test` | All 25 status × action pairs, history rows (from, to, time, actor), nothing stored on `409`; claimed versus verified fixes |
 | Hash-chain integrity | `LifecycleHistoryVerificationIntegrationTest`, `LifecycleHashChainEdgeCaseIntegrationTest`, `VulnerabilityLifecycleHistoryServiceTest` | Tampering cases, legacy rows (`UNCHAINED`), empty history (`BROKEN`) |
 | Database consistency | `WriteFailureRollbackIntegrationTest`, `ConcurrentInteractionIntegrationTest`, `SchemaCompatibilityTest`, `*RepositoryTest` | Rollback when a write fails, concurrent actions on one event, `schema.sql` against the entities |
-| Regression | the other service tests | Behaviour analysis, developers, security events |
+| Regression | the other service tests, `ResponseSequenceAnalysisTest` | Behaviour analysis, response sequences, developers, security events |
 
 Every test uses its own H2 rows and deletes them afterwards; no test can reach PostgreSQL.
 The hash-chain tests show what the chain detects (edited, deleted, inserted, reordered or
@@ -190,6 +190,7 @@ endpoints above also return actions recorded as developer interactions.
 | GET    | `/api/lifecycle-history/security-event/{securityEventId}` | Status history of a security event      |
 | GET    | `/api/lifecycle-history/security-event/{securityEventId}/verify` | Check the history's hash chain: `VALID`, `BROKEN` or `UNCHAINED` |
 | GET    | `/api/developer-behaviour/{developerId}`                 | Behaviour summary and classification     |
+| GET    | `/api/developer-behaviour/{developerId}/response-sequences` | Behaviour Sequence Intelligence: recurring response sequences and transitions |
 
 ## Example Requests
 
@@ -288,11 +289,40 @@ can rebuild the chain, and deleting the newest entries is not detected. Details:
 
 `fixedCount` and `fixRate` count **claimed** fixes (any `FIX`), and the classification uses them. `verifiedFixCount` and `verifiedFixRate` count only events with a `VERIFIED` fix, so they stay `0` until a verification source exists.
 
+## Behaviour Sequence Intelligence
+
+`GET /api/developer-behaviour/{developerId}/response-sequences` studies the **order** of a
+developer's actions on each security event. It reads behaviour logs only (the `SYSTEM`
+`DETECTED` history entry is not an action, and history entries would double-count actions),
+builds one sequence per event ordered by action time, and merges consecutive repeats (for
+example a second `OPEN`). It returns:
+
+- `dominantPattern`: the most frequent complete sequence, or `INSUFFICIENT_DATA` with a reason;
+- `frequentPatterns`: contiguous patterns of 2–5 actions with `occurrenceCount`,
+  `sequenceCount`, `supportPercent` (sequences containing it ÷ `totalEligibleSequences`) and
+  `lastOccurredAt`;
+- `transitionAnalysis`: `fromAction → toAction` with `transitionCount`, `outgoingSampleSize`
+  (the denominator) and `probabilityPercent`;
+- counts of the data used and left out, and the thresholds applied.
+
+With fewer than 3 complete sequences, `analysisStatus` is `INSUFFICIENT_DATA` and no patterns
+or transitions are returned. `404` for an unknown developer. Results are descriptive, not
+predictions. Thresholds (optional, defaults shown):
+
+```properties
+sequence-analysis.min-sequences=3
+sequence-analysis.min-pattern-sequences=2
+sequence-analysis.min-support-percent=10
+sequence-analysis.min-transition-sample=5
+```
+
+Method and limitations: [../docs/research/response-sequence-analysis.md](../docs/research/response-sequence-analysis.md).
+
 ## Error Handling
 
 All errors go through `GlobalExceptionHandler` and return an `ApiErrorResponse`:
 
 - `400` – validation failure
-- `404` – resource not found (`ResourceNotFoundException`)
+- `404` – resource not found (`ResourceNotFoundException`), or no endpoint at that path (the message names it; if the endpoint is new, restart the backend)
 - `409` – duplicate resource (`DuplicateResourceException`) or invalid lifecycle transition (`InvalidStatusTransitionException`)
 - `500` – unexpected server error

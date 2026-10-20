@@ -19,6 +19,7 @@ import {
   getClassificationInfo,
 } from '../components/Badges';
 import { Icon } from '../components/Icon';
+import { BehaviourSequenceIntelligence } from './BehaviourSequences';
 import { DeveloperBehaviourSummary, BehaviourAction } from '../types';
 
 export const BehaviourAnalysis: React.FC = () => {
@@ -54,7 +55,7 @@ export const BehaviourAnalysis: React.FC = () => {
       <PageHeader
         title="Developer Behaviour Analysis"
         description="Fix, ignore, and reopen metrics derived from developer reactions in VS Code, and the explainable classification evaluated by the backend."
-        endpoints={[`/api/developer-behaviour/${id}`]}
+        endpoints={[`/api/developer-behaviour/${id}`, `/api/developer-behaviour/${id}/response-sequences`]}
       />
 
       <div className="stack">
@@ -184,6 +185,8 @@ export const BehaviourAnalysis: React.FC = () => {
             </table>
           </Card>
         </div>
+
+        <BehaviourSequenceIntelligence developerId={id} />
       </div>
     </>
   );

@@ -33,6 +33,13 @@ spring.jpa.open-in-view=false
 # Optional – defaults to https://api.github.com
 #github.api.base-url=https://api.github.com
 
+# ----- Behaviour Sequence Intelligence (GET /api/developer-behaviour/{id}/response-sequences) -----
+# Optional – evidence thresholds, defaults shown (TECHNICAL_OVERVIEW §7.4)
+#sequence-analysis.min-sequences=3
+#sequence-analysis.min-pattern-sequences=2
+#sequence-analysis.min-support-percent=10
+#sequence-analysis.min-transition-sample=5
+
 # ----- Springdoc / Swagger -----
 springdoc.api-docs.path=/api-docs
 springdoc.swagger-ui.path=/swagger-ui.html

@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
@@ -28,6 +29,26 @@ public class GlobalExceptionHandler {
         return buildResponse(
                 HttpStatus.NOT_FOUND,
                 ex.getMessage(),
+                request
+        );
+    }
+
+    /**
+     * A path no controller maps. Without this, the catch-all below answers 500, which looks
+     * like a crash; the usual cause is a client calling an endpoint this backend instance does
+     * not have yet (it was started before the endpoint was added).
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoEndpoint(
+            NoResourceFoundException ex,
+            HttpServletRequest request) {
+
+        log.warn("No endpoint for {} {}", request.getMethod(), request.getRequestURI());
+
+        return buildResponse(
+                HttpStatus.NOT_FOUND,
+                String.format("No endpoint %s %s on this server. If it was added recently, restart the "
+                        + "backend so it is registered.", request.getMethod(), request.getRequestURI()),
                 request
         );
     }

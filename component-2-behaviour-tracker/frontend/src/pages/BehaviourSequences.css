@@ -1,0 +1,66 @@
+/* Behaviour Sequence Intelligence section (TASKS P2-10). Uses the theme tokens from
+   index.css only, so light and dark themes follow the rest of the dashboard. */
+
+.sequence-intro {
+  font-size: 13px;
+  margin-top: -6px;
+}
+
+.sequence-chain {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.dominant-pattern {
+  display: grid;
+  gap: 10px;
+}
+
+.dominant-pattern .sequence-chain {
+  background: var(--hover);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.share-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 150px;
+}
+
+.share-bar .meter-track {
+  display: block;
+  flex: 1;
+  height: 8px;
+}
+
+.share-bar .meter-fill {
+  display: block;
+}
+
+.share-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: right;
+}
+
+.sample-flag {
+  color: var(--ink-muted);
+  display: block;
+  font-size: 11px;
+}
+
+.sequence-note {
+  align-items: flex-start;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.sequence-note svg {
+  flex: none;
+  margin-top: 2px;
+}

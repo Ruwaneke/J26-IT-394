@@ -5,6 +5,7 @@ import {
   DeveloperInteraction,
   LifecycleHistory,
   DeveloperBehaviourSummary,
+  ResponseSequenceAnalysis,
   QualityStatus,
   TestRunState,
 } from '../types';
@@ -89,6 +90,9 @@ export const api = {
 
   getBehaviourSummary: (developerId: number | string, signal?: AbortSignal): Promise<DeveloperBehaviourSummary> =>
     get<DeveloperBehaviourSummary>(`/developer-behaviour/${developerId}`, signal),
+
+  getResponseSequences: (developerId: number | string, signal?: AbortSignal): Promise<ResponseSequenceAnalysis> =>
+    get<ResponseSequenceAnalysis>(`/developer-behaviour/${developerId}/response-sequences`, signal),
 };
 
 // ── Quality & Regression Tests (TASKS P1-5) ───────────────────────────────────

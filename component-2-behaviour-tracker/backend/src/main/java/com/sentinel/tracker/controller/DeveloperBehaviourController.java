@@ -1,7 +1,10 @@
 package com.sentinel.tracker.controller;
 
 import com.sentinel.tracker.dto.DeveloperBehaviourSummaryResponse;
+import com.sentinel.tracker.dto.ResponseSequenceAnalysisResponse;
 import com.sentinel.tracker.service.BehaviourAnalysisService;
+import com.sentinel.tracker.service.ResponseSequenceService;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,9 +21,23 @@ import org.springframework.web.bind.annotation.RestController;
 public class DeveloperBehaviourController {
 
     private final BehaviourAnalysisService behaviourAnalysisService;
+    private final ResponseSequenceService responseSequenceService;
 
     @GetMapping("/{developerId}")
     public ResponseEntity<DeveloperBehaviourSummaryResponse> getDeveloperBehaviourSummary(@PathVariable Long developerId) {
         return ResponseEntity.ok(behaviourAnalysisService.getDeveloperBehaviourSummary(developerId));
+    }
+
+    @GetMapping("/{developerId}/response-sequences")
+    @Operation(
+        summary = "Behaviour Sequence Intelligence: recurring response sequences",
+        description = "Orders each security event's developer actions (behaviour logs only; the SYSTEM "
+                + "DETECTED entry is not an action), then reports the dominant complete sequence, "
+                + "contiguous patterns of 2 to 5 actions with occurrence counts and support, and "
+                + "action-to-action transition shares with their sample sizes. Descriptive, not "
+                + "predictive. INSUFFICIENT_DATA when there are too few complete sequences."
+    )
+    public ResponseEntity<ResponseSequenceAnalysisResponse> getResponseSequences(@PathVariable Long developerId) {
+        return ResponseEntity.ok(responseSequenceService.getResponseSequences(developerId));
     }
 }

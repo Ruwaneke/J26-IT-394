@@ -112,7 +112,7 @@ flowchart TB
 | `client/` | Outbound HTTP (GitHub) | Translate failures into domain exceptions. |
 | `config/` | JPA auditing, GitHub `RestClient` (5 s connect and read timeouts) | — |
 | `exception/` | Domain exceptions and `GlobalExceptionHandler` | Each exception maps to exactly one HTTP status. |
-| `analysis/` | `LifecycleHashChain` (history hash chain, §5.5); planned home for repeated-mistake and session analysis (TASKS Phase 2) | Plain classes with no Spring or repository dependencies, so they are unit-testable. |
+| `analysis/` | `LifecycleHashChain` (history hash chain, §5.5); `ResponseSequenceAnalysis` (Behaviour Sequence Intelligence, §7.4); planned home for repeated-mistake and session analysis (TASKS Phase 2) | Plain classes with no Spring or repository dependencies, so they are unit-testable. |
 
 ### 1.3 Services
 
@@ -126,6 +126,7 @@ flowchart TB
 | `BehaviourLogService` | `BehaviourLogServiceImpl` | Legacy API: the create call delegates to interactions; reads |
 | `VulnerabilityLifecycleHistoryService` | `VulnerabilityLifecycleHistoryServiceImpl` | History of an event, oldest first; verify its hash chain (§5.5) |
 | `BehaviourAnalysisService` | `BehaviourAnalysisServiceImpl` | Behaviour summary and classification |
+| `ResponseSequenceService` | `ResponseSequenceServiceImpl` | Response sequences, patterns and transitions (§7.4); thresholds from `sequence-analysis.*` |
 
 ### 1.4 Tech stack
 
@@ -152,6 +153,7 @@ The template is `backend/src/main/resources/application.properties.example`. Cop
 | `spring.jpa.open-in-view` | `false` | Lazy relations cannot load after the service returns; see §6 |
 | `github.api.base-url` | `https://api.github.com` | Override only for tests or a mock |
 | `springdoc.api-docs.path` / `swagger-ui.path` | `/api-docs` / `/swagger-ui.html` | — |
+| `sequence-analysis.min-sequences` / `min-pattern-sequences` / `min-support-percent` / `min-transition-sample` | `3` / `2` / `10` / `5` | Evidence thresholds for §7.4; optional |
 
 The test profile (`src/test/resources/application-test.properties`) uses H2 in memory with
 `create-drop`, and turns Swagger off.
@@ -572,6 +574,34 @@ else                                                      → SECURITY_NEUTRAL
 - New metrics are **added** fields of `DeveloperBehaviourSummaryResponse`. Never rename or
   remove existing ones.
 
+### 7.4 Behaviour Sequence Intelligence (response sequences)
+
+Source: `analysis/ResponseSequenceAnalysis` (pure), called by `ResponseSequenceServiceImpl`
+(read-only transaction). Endpoint: `GET /api/developer-behaviour/{developerId}/response-sequences`.
+Method, worked example and limitations: [docs/research/response-sequence-analysis.md](docs/research/response-sequence-analysis.md).
+
+- **Input: behaviour logs only.** Lifecycle history is not read: its `DETECTED` entry is
+  written by `SYSTEM`, and each later entry copies a logged action (reading both would
+  double-count). Nothing new is stored.
+- **Sequence per event.** Logs without an event or on another developer's event are excluded.
+  A log id seen twice counts once. Each event's logs are ordered by `timestamp`, ties by id.
+  An event with a log lacking a timestamp is excluded whole. Consecutive identical actions
+  are merged into one step (a second `OPEN`, a retried request).
+- **Denominator.** `totalEligibleSequences` = complete sequences (one per remaining event).
+- **Patterns.** Contiguous windows of 2–5 steps. `occurrenceCount` counts every window;
+  `sequenceCount` counts sequences containing it; support = `sequenceCount ÷
+  totalEligibleSequences × 100` (one decimal). Reported when `sequenceCount ≥
+  min-pattern-sequences` and support ≥ `min-support-percent`.
+- **Transitions.** Consecutive pairs; probability = count(A→B) ÷ transitions leaving A × 100,
+  with `outgoingSampleSize` and `sufficientSample` (≥ `min-transition-sample`). Observed
+  shares, not causal and not predictions.
+- **Dominant pattern.** Most frequent complete sequence (any length); `FOUND` only when it
+  meets the pattern thresholds and is not tied, else `INSUFFICIENT_DATA` with a reason.
+- **Insufficient data.** Fewer than `min-sequences` complete sequences →
+  `analysisStatus: INSUFFICIENT_DATA`, a reason, and empty pattern and transition lists.
+- Rules for changing it: as §7.3 (hand-calculated tests, docs). It must stay descriptive: no
+  prediction or scoring (C3, C4 scope).
+
 ---
 
 ## 8. REST API contract
@@ -595,6 +625,7 @@ else                                                      → SECURITY_NEUTRAL
 | GET | `/api/lifecycle-history/security-event/{id}`; also served at `/api/lifecycle/security-event/{id}`, `/api/lifecycle-history/{id}` and `/api/lifecycle/{id}` | — | `200` list, oldest first (each item includes `entryHash`) | 404 |
 | GET | `/api/lifecycle-history/security-event/{id}/verify`; also served at the same three alias prefixes with `/verify` | — | `200` `HistoryVerificationResponse` (`status` `VALID`/`BROKEN`/`UNCHAINED`, §5.5) | 404 |
 | GET | `/api/developer-behaviour/{developerId}` | — | `200` `DeveloperBehaviourSummaryResponse` | 404 |
+| GET | `/api/developer-behaviour/{developerId}/response-sequences` | — | `200` `ResponseSequenceAnalysisResponse` (§7.4) | 404 |
 
 The dashboard uses the `/api/lifecycle/...` alias. Keep all four lifecycle paths.
 
@@ -632,6 +663,7 @@ them are reported.
 | `InvalidGitHubTokenException` | 401 |
 | `AccessDeniedException` (C2's own class, not Spring Security's) | 403 |
 | `ResourceNotFoundException` | 404 |
+| `NoResourceFoundException` (Spring: no controller maps the path) | 404, naming the method and path and suggesting a backend restart (added 2026-10-21, see TASKS P2-10 log) |
 | `DuplicateResourceException`, `InvalidStatusTransitionException` | 409 |
 | `GitHubApiException` | 502 |
 | Anything else | 500 (generic message; details only in the log) |
@@ -742,7 +774,7 @@ the earliest log per `session_id`.
 | `components/Badges.tsx` | Status, severity, action and classification badges, plus **`CLASSIFICATION_RULES`** (the rules from §7.2, in words) |
 | `components/Cards.tsx` | `Card`, `StatTile`, `Meter`, page header, loading, error and empty states, formatters |
 | `components/Layout.tsx`, `Icon.tsx` | Shell and icons |
-| `pages/` | `Home`, `DeveloperProfile`, `SecurityEvents`, `LifecycleTimeline`, `BehaviourAnalysis`, `QualityTests` (with `QualityTests.css`) |
+| `pages/` | `Home`, `DeveloperProfile`, `SecurityEvents`, `LifecycleTimeline`, `BehaviourAnalysis` (includes the Behaviour Sequence Intelligence section from `BehaviourSequences.tsx` and `.css`, §7.4), `QualityTests` (with `QualityTests.css`) |
 | `../dev/` (outside `src/`) | Node scripts for the test report (TASKS P1-5): `surefireReport.mjs` reads Surefire's XML, `qualityPlugin.mjs` is the dev-server plugin behind the Quality page, `testReport.mjs` is `npm run test:report`, `quality.test.mjs` is `npm test` |
 
 ### 11.2 Routes
@@ -794,7 +826,7 @@ the earliest log per `session_id`.
 
 ## 13. Testing
 
-### 13.1 What exists (402 test methods in 32 classes)
+### 13.1 What exists (432 test methods in 34 classes)
 
 | Class | Type | Covers |
 |---|---|---|
@@ -813,7 +845,7 @@ the earliest log per `session_id`.
 | `DeveloperInteractionFlowIntegrationTest` | `@SpringBootTest` + H2 | Real C1-style requests: second `OPEN` and `DISMISS` after `IGNORE` → 201 with no history row; `OPEN` on `FIXED` → 409, nothing stored |
 | `LifecycleHistoryVerificationIntegrationTest` | `@SpringBootTest` + H2 | Hash chain through the real write path: untouched → `VALID`; edited status, edited timestamp, deleted, reordered, re-hashed and hash-stripped rows → `BROKEN` at the expected entry; legacy rows → `UNCHAINED`; newest-row deletion not detected (documented limit); 404; alias path; chain cost on 205 rows |
 | `LifecycleHashChainTest` | Unit | Deterministic hash, every field changes it, microsecond truncation, `seal`, genesis fallback |
-| `DeveloperBehaviourControllerTest` | MockMvc | 200 |
+| `DeveloperBehaviourControllerTest` | MockMvc | 200 (both behaviour-controller services mocked) |
 
 Added by TASKS **P1-5** (API contract and regression suite). The `*ApiContractTest` and
 other `controller/` integration classes extend `ApiContractTestSupport`: the real stack on
@@ -843,16 +875,24 @@ Added by TASKS **P1-6** (claimed versus verified fixes, §4.5):
 | `FixVerificationRulesTest` | Mockito, mock verification results | Each result stored on the `FIX` log and returned, the event still moves to `FIXED` with one history row; `null` → `CLAIMED`; `FIX` on `FIXED` stores the result without history; `403` before verification; other actions never call the service and store `NULL`; the default implementation never reports `VERIFIED` |
 | `FixVerificationIntegrationTest` | `@SpringBootTest` + H2, `@SpyBean` with controlled results | C1's `FIX` body → `CLAIMED` by default; `VERIFIED` and `STILL_VULNERABLE` stored and returned, lifecycle and chain unchanged; other actions `null`; summary separates claimed from verified fixes (hand-calculated); the deprecated endpoint records `CLAIMED` |
 
-`BehaviourAnalysisServiceTest` (claimed versus verified counts and rates, classification
-unchanged) and `SchemaCompatibilityTest` (re-running `schema.sql` marks older `FIX` rows
-`CLAIMED` only) gained one test each.
+`BehaviourAnalysisServiceTest` gained two tests (claimed versus verified counts and rates,
+classification unchanged) and `SchemaCompatibilityTest` one (re-running `schema.sql` marks
+older `FIX` rows `CLAIMED` only).
+
+Added by TASKS **P2-10** (Behaviour Sequence Intelligence, §7.4):
+
+| Class | Type | Covers |
+|---|---|---|
+| `ResponseSequenceAnalysisTest` | Unit, hand-built fixtures | Time order, ties, events kept apart, exclusions, duplicate ids, merged repeats, missing timestamps, hand-calculated patterns/support/dominant/transitions, occurrences versus sequences, thresholds, lengths 2–5, ties and every insufficient-data reason |
+| `ResponseSequenceApiIntegrationTest` | `@SpringBootTest` + H2 | The endpoint with C1's request bodies: `SYSTEM` entries and `409`/`403` actions never counted, developers apart, no actions, `404`, read-only, summary unchanged; an unmapped route gives `404` naming the endpoint, not the generic `500` (regression) |
 
 The P1-3 gaps are closed by these classes.
 
 **Found by P1-5, not changed** (behaviour kept as it is; see TASKS Phase 6):
-- non-numeric path ids (`/api/developers/abc`), unknown routes, a wrong `Content-Type` and
-  a wrong HTTP method all return `500` instead of `400`, `404`, `415` and `405`, because
-  `GlobalExceptionHandler`'s catch-all handles Spring MVC's own exceptions;
+- non-numeric path ids (`/api/developers/abc`), a wrong `Content-Type` and a wrong HTTP
+  method all return `500` instead of `400`, `415` and `405`, because
+  `GlobalExceptionHandler`'s catch-all handles Spring MVC's own exceptions. (Unknown routes
+  return `404` since 2026-10-21.)
 - a timestamp ending in `Z` is accepted and the zone is dropped, while `+05:30` is rejected;
   a numeric `severity` is read as the enum position (`3` → `CRITICAL`); `lineNumber` `1.5`
   becomes `1`. C1 sends none of these;

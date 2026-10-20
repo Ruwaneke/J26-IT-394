@@ -397,6 +397,7 @@ No database connection is held while waiting for GitHub.
 | GET | `/api/lifecycle-history/security-event/{securityEventId}` | Status history of an event |
 | GET | `/api/lifecycle-history/security-event/{securityEventId}/verify` | Check that the event's history was not altered (`VALID`, `BROKEN`, `UNCHAINED`) |
 | GET | `/api/developer-behaviour/{developerId}` | Behaviour summary and classification |
+| GET | `/api/developer-behaviour/{developerId}/response-sequences` | Behaviour Sequence Intelligence: recurring response sequences, patterns and transitions (descriptive) |
 
 **Errors** go through one `GlobalExceptionHandler` and return an `ApiErrorResponse`:
 
@@ -425,7 +426,7 @@ for exploring the tracker's data. In development, Vite proxies `/api` to
 
 The app supports light and dark themes.
 
-**Tests.** 402 test methods in 32 classes: API contracts for every endpoint (including the
+**Tests.** 432 test methods in 34 classes: API contracts for every endpoint (including the
 exact requests C1 sends), GitHub sign-in with GitHub's HTTP mocked, ownership, all 25 lifecycle
 status × action pairs, claimed versus verified fixes, hash-chain tampering, rollback on failed writes, concurrent actions and
 `schema.sql` against the entities. They run against H2 in memory, so no PostgreSQL is needed.
@@ -866,7 +867,7 @@ The full integration path is the remaining work.
 | Component | State |
 |---|---|
 | C1 | Working: real-time SQLi, XSS and secrets detection (57 patterns); editor diagnostics and code actions; GitHub sign-in; role-based dashboards; event reporting to C2. OWASP Top 10 rules and Neon storage in progress on `hishen_dev`. |
-| C2 | Working: full REST API, enforced lifecycle, behaviour analysis and classification, GitHub verification, tamper-evident lifecycle history, claimed versus verified fixes, dashboard, 402 tests with a test report page. Connected to C1. |
+| C2 | Working: full REST API, enforced lifecycle, behaviour analysis and classification, GitHub verification, tamper-evident lifecycle history, claimed versus verified fixes, behaviour sequence intelligence, dashboard, 432 tests with a test report page. Connected to C1. |
 | C3 | Scoring, escalation and templates done with tests. Recommendation generator, engine integration and REST API scheduled for 17–20 October 2026. |
 | C4 | Full pipeline, dashboard and report working on simulated data. The ingest adapter for real C2 data is planned. |
 

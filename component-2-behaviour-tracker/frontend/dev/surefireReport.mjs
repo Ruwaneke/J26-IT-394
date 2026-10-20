@@ -60,6 +60,7 @@ const CLASS_CATEGORY = /** @type {Record<string, CategoryId>} */ ({
   SecurityEventControllerTest: 'api-contract',
   DeveloperInteractionControllerTest: 'api-contract',
   DeveloperBehaviourControllerTest: 'api-contract',
+  ResponseSequenceApiIntegrationTest: 'api-contract',
 
   GitHubAuthApiContractTest: 'auth',
   GitHubAuthServiceTest: 'auth',

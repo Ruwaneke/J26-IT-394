@@ -2,6 +2,7 @@ package com.sentinel.tracker.controller;
 
 import com.sentinel.tracker.dto.DeveloperBehaviourSummaryResponse;
 import com.sentinel.tracker.service.BehaviourAnalysisService;
+import com.sentinel.tracker.service.ResponseSequenceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -23,6 +24,9 @@ class DeveloperBehaviourControllerTest {
 
     @MockBean
     private BehaviourAnalysisService behaviourAnalysisService;
+
+    @MockBean
+    private ResponseSequenceService responseSequenceService;
 
     @Test
     void getDeveloperBehaviourSummary_shouldReturn200() throws Exception {

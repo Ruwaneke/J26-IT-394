@@ -97,6 +97,8 @@ flowchart LR
 - Store security events, developer interactions and lifecycle history.
 - Enforce valid lifecycle transitions.
 - Calculate behaviour metrics and an explainable classification.
+- Describe the order of developer responses (response sequences, patterns, transitions).
+  Descriptive only: no prediction or risk modelling, which belong to C4.
 - Serve all of this over a documented REST API, and show it in the C2 dashboard.
 - Provide the data that C3 and C4 need, in a form agreed with them.
 
@@ -118,6 +120,7 @@ C2 *serves data for* these. It does not re-implement them.
 | **Lifecycle status** | Where an event is now: `DETECTED`, `OPENED`, `IGNORED`, `REOPENED` or `FIXED`. |
 | **Lifecycle history** | Every status change of an event: from, to, when and by whom (`SYSTEM` or the developer). The entries are hash-chained, so a later edit can be detected. |
 | **Claimed and verified fix** | A `FIX` from C1 is a *claim*: the developer used the Fix action, which shows the secure example. It is stored as `CLAIMED`. A fix is `VERIFIED` only when a verification source confirms the vulnerability is gone. No such source exists until C1 reports re-scan results, so every fix is `CLAIMED` today. |
+| **Response sequence** | The ordered developer actions on one security event (for example `OPEN → IGNORE → REOPEN → FIX`). Behaviour Sequence Intelligence finds sequences and transitions that recur across a developer's events. Detection by the system is not part of a sequence. |
 | **Response time** | Seconds from detection to an action (`time_since_detection_seconds`). |
 | **Repeated vulnerability** | Today: a vulnerability type that appears more than once for a developer. Planned: a link from a new detection to an earlier one of the same type in the same file. |
 | **Session** | One coding session in the extension. C1 generates a session id and sends it with every action. |
@@ -148,10 +151,10 @@ rejected, and nothing is stored.
 | Identity | GitHub sign-in verified against GitHub's API. Existing records are found, linked or created, and a login already linked to a different GitHub account is refused. |
 | Recording | Security events, developer interactions, lifecycle history, response times, sessions and sources. |
 | Integrity | Lifecycle transitions are enforced. A developer can act only on their own events. Concurrent actions on one event are serialised with a database lock. Lifecycle history is tamper-evident: a hash chain shows if an entry was later edited, deleted or reordered. This is tamper-evident, not tamper-proof: someone with full database access who knows the algorithm can rebuild the chain, and deleting the newest entries is not detected. |
-| Analysis | Opened, fixed, ignored, dismissed and reopened counts; fix, ignore, reopen and high-severity fix rates; average response time; repeated vulnerability count; classification. Fix counts and rates are *claimed* fixes; verified fixes are counted separately and stay at 0 until a verification source exists. |
+| Analysis | Opened, fixed, ignored, dismissed and reopened counts; fix, ignore, reopen and high-severity fix rates; average response time; repeated vulnerability count; classification. Fix counts and rates are *claimed* fixes; verified fixes are counted separately and stay at 0 until a verification source exists. Behaviour Sequence Intelligence: the dominant response sequence, recurring patterns with support, and action-to-action transition shares, with explicit insufficient-data handling. |
 | API | 20+ endpoints with Swagger UI, validation and one consistent error format. |
-| Dashboard | Developer list, profile, security events, lifecycle timeline and behaviour analysis pages; a Quality & Regression Tests page with the latest test results; light and dark themes. |
-| Quality | 402 automated tests on an in-memory database: API contracts (including C1's exact requests), GitHub sign-in with GitHub mocked, ownership, every lifecycle transition, claimed versus verified fixes, hash-chain tampering, rollback, concurrency and the schema script. The dashboard shows the results of the latest run. |
+| Dashboard | Developer list, profile, security events, lifecycle timeline and behaviour analysis pages (including a Behaviour Sequence Intelligence section); a Quality & Regression Tests page with the latest test results; light and dark themes. |
+| Quality | 432 automated tests on an in-memory database: API contracts (including C1's exact requests), GitHub sign-in with GitHub mocked, ownership, every lifecycle transition, claimed versus verified fixes, hash-chain tampering, rollback, concurrency and the schema script. The dashboard shows the results of the latest run. |
 | Integration | The Sentinel extension sends real events and actions to C2. |
 
 ## 10. Behaviour classification at a glance

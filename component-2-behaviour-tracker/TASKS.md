@@ -518,6 +518,36 @@ tampering cases at the right entry and returns `VALID` for untouched history. Te
 and the docs state the tamper-evident limit.
 **Depends on.** P1-1. It does not depend on P2-1 to P2-8 and can be taken before them.
 
+### P2-10 · Behaviour Sequence Intelligence (response sequences)
+- [x] Done 2026-10-21
+
+**Why.** The behaviour summary counts actions per event and ignores their order. The owner
+asked (21 October 2026) for a research feature that studies the order in which a developer
+responds to security events across events: "Can developer security-response sequence
+analysis reveal recurring behavioural patterns that aggregate action counts alone cannot
+adequately represent?" Not part of T3/T4; does not depend on P2-1.
+
+**Do**
+1. Build sequences from `behaviour_logs` only (the developer actions). Do not read lifecycle
+   history: its `DETECTED` entry is by `SYSTEM`, and other entries copy logged actions.
+2. One sequence per own event, ordered by action time (ties by id); merge consecutive
+   repeats; exclude records without an own event and events with a missing timestamp.
+3. Report frequent contiguous patterns (2–5 actions) with occurrence count, sequence count,
+   support and last occurrence; transitions with count, outgoing sample size and probability;
+   the dominant complete sequence; explicit `INSUFFICIENT_DATA`. Thresholds configurable.
+4. `GET /api/developer-behaviour/{developerId}/response-sequences`, logic in
+   `analysis/ResponseSequenceAnalysis`. No new table, no change to existing APIs.
+5. A Behaviour Sequence Intelligence section on the Behaviour Analysis page (not the
+   lifecycle timeline), with loading, error, empty and insufficient-data states.
+6. Tests on hand-built fixtures and on the real stack; a method note in
+   `docs/research/response-sequence-analysis.md`; TECHNICAL_OVERVIEW §7.4 and the other docs.
+7. Descriptive only: no prediction, no ML (C4 scope).
+
+**Done when.** The endpoint and section give the hand-calculated results for the fixtures,
+system entries are never counted, insufficient data is explicit, and all tests and the build
+pass.
+**Depends on.** P1-1.
+
 ---
 
 ## Phase 3 · Integration with C3 and C4
@@ -720,8 +750,8 @@ copy of an existing database.
 - Developer comparison or team views in the dashboard (check overlap with C4 first).
 - Export the dashboard's views as a PDF report.
 - Map Spring MVC's own errors to their 4xx codes in `GlobalExceptionHandler`: a non-numeric
-  path id, an unknown route, a wrong `Content-Type` and a wrong method now return `500`
-  (found by P1-5). Changes status codes clients see, so agree it first. Also: a concurrent
+  path id, a wrong `Content-Type` and a wrong method now return `500` (found by P1-5; the
+  unknown route was fixed on 2026-10-21, see the progress log). Changes status codes clients see, so agree it first. Also: a concurrent
   duplicate developer gets `500` instead of `409`; `400` messages for unreadable bodies can
   show Java type names; timestamps ending in `Z` lose their zone while `+05:30` is rejected.
 
@@ -767,6 +797,9 @@ found.
 
 | Date | Entry |
 |---|---|
+| 2026-10-21 | P2-10 follow-up: the dashboard showed "An unexpected error occurred" for the new section. Cause: the backend on port 8080 had been started at 23:25 on 20 October, before P1-6 and P2-10, so `/response-sequences` was not mapped; Spring's `NoResourceFoundException` fell into the catch-all and became a generic `500`. The feature code was not at fault (the current code returned `200` for developers 1–9 on the real PostgreSQL database). Fixed the misleading error only: unknown routes now give `404` naming the method and path, with a server-side warning (`GlobalExceptionHandler.handleNoEndpoint`, regression test in `ResponseSequenceApiIntegrationTest`; 432 tests pass). This is the unknown-route part of the Phase 6 backlog item, done at the owner's request; the other Spring MVC errors are unchanged. C1 calls only mapped routes, so it is unaffected. The running backend must be restarted to serve P1-6 and P2-10. |
+| 2026-10-21 | P2-10 done (added the same day at the owner's request): `GET /api/developer-behaviour/{id}/response-sequences` and a Behaviour Sequence Intelligence section on the Behaviour Analysis page. Reads behaviour logs only; no table, schema or existing API changed. 29 new test methods in 2 classes (402 → 431, all pass); mutating the transition denominator, the repeat merging or the time ordering makes tests fail. Checked visually against a throwaway H2 backend with synthetic data (dark theme; analysed and insufficient-data states). No frontend component test framework exists, so the section has no automated rendering test. Data limits recorded in the method note: C1's original action names live only in metadata (P3-3), FIX is a claim (P1-6), no request id, client timestamps. |
+| 2026-10-21 | Plan changed: added P2-10 (Behaviour Sequence Intelligence), requested by the owner. |
 | 2026-10-20 | P1-6 done (added the same day at the owner's request, after a review of the lifecycle state machine): every `FIX` stores `fixVerification` (`CLAIMED` unless a verification source says otherwise); `ClaimOnlyFixVerificationService` is the only source, so every fix is `CLAIMED`; tests use controlled mock results. Lifecycle, C1 contract, `fixRate` and classification unchanged; `verifiedFixCount`/`verifiedFixRate` added. 20 new test methods in 2 new classes and 2 existing ones (382 → 402, all pass); with the stored value removed, 10 of the 17 new write-path tests fail. Review result for the other points: transitions, `409`, the `DETECTED` entry, history fields, transactions and tests were already in place. Exact duplicate deliveries (a C1 retry after a timeout) are stored as a second log because no request id exists; a dedup key would need C1 to send one. |
 | 2026-10-20 | Plan changed: added P1-6 (claimed versus verified fixes), requested by the owner. |
 | 2026-10-20 | P1-5 done (added the same day at the owner's request; P1-3's steps are part of it and P1-3 is ticked): 254 new test methods in 14 classes (128 → 382, all pass, `mvn test` about 8 s of Maven time). Contract tests run on the real stack with C1's exact bodies; GitHub is mocked with `MockRestServiceServer`. Checked that the new tests fail when the lifecycle, the row lock or `schema.sql` are broken. Dashboard: `/quality` page reading Surefire's XML through a dev-server-only Vite plugin (fixed `mvn test`, no input, no credentials passed, one run at a time, 10 min limit); `npm run test:report` writes `backend/target/quality-report.json`; `npm test` (Node's built-in runner, 10 tests) covers the report reader and the runner's guards. No API, lifecycle, schema or hash-chain policy was changed. Found and left as is (backlog): several Spring MVC errors give `500` instead of 4xx; see TECHNICAL_OVERVIEW §13.1. |

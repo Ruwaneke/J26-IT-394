@@ -81,6 +81,60 @@ export interface DeveloperBehaviourSummary {
   behaviourClassification: string;
 }
 
+// ── Behaviour Sequence Intelligence (TASKS P2-10) ─────────────────────────────
+// Mirrors ResponseSequenceAnalysisResponse. Percentages are 0–100, one decimal.
+
+export interface SequencePattern {
+  actions: BehaviourAction[];
+  length: number;
+  occurrenceCount: number;
+  sequenceCount: number;
+  supportPercent: number;
+  eligibleSequenceCount: number;
+  lastOccurredAt: string | null;
+}
+
+export interface DominantSequencePattern {
+  status: 'FOUND' | 'INSUFFICIENT_DATA';
+  actions: BehaviourAction[] | null;
+  occurrenceCount: number | null;
+  supportPercent: number | null;
+  eligibleSequenceCount: number;
+  lastOccurredAt: string | null;
+  reason: string | null;
+}
+
+export interface ActionTransition {
+  fromAction: BehaviourAction;
+  toAction: BehaviourAction;
+  transitionCount: number;
+  outgoingSampleSize: number;
+  probabilityPercent: number;
+  sufficientSample: boolean;
+}
+
+export interface ResponseSequenceAnalysis {
+  developerId: number;
+  analysisStatus: 'ANALYSED' | 'INSUFFICIENT_DATA';
+  insufficientDataReason: string | null;
+  totalActionRecords: number;
+  excludedActionRecords: number;
+  collapsedRepeatActions: number;
+  totalEligibleEvents: number;
+  totalEligibleSequences: number;
+  excludedIncompleteEvents: number;
+  singleActionSequences: number;
+  thresholds: {
+    minSequences: number;
+    minPatternSequences: number;
+    minSupportPercent: number;
+    minTransitionSample: number;
+  };
+  dominantPattern: DominantSequencePattern;
+  frequentPatterns: SequencePattern[];
+  transitionAnalysis: ActionTransition[];
+}
+
 export interface ClassificationRule {
   code: string;
   label: string;
