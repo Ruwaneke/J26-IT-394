@@ -4,6 +4,7 @@ import com.sentinel.tracker.dto.DeveloperBehaviourSummaryResponse;
 import com.sentinel.tracker.entity.BehaviourLog;
 import com.sentinel.tracker.entity.SecurityEvent;
 import com.sentinel.tracker.enums.BehaviourAction;
+import com.sentinel.tracker.enums.FixVerificationStatus;
 import com.sentinel.tracker.enums.Severity;
 import com.sentinel.tracker.exception.ResourceNotFoundException;
 import com.sentinel.tracker.repository.BehaviourLogRepository;
@@ -28,6 +29,10 @@ import java.util.stream.Collectors;
  * Action counts are the number of distinct security events (owned by the developer)
  * that received the action at least once, so repeated actions on the same event are
  * counted once and every rate stays within 0–100%.
+ *
+ * A FIX action is a claim: fixedCount and fixRate count claimed fixes, and the classification
+ * uses them unchanged. verifiedFixCount and verifiedFixRate count only fixes whose
+ * verification is VERIFIED.
  */
 @Service
 @RequiredArgsConstructor
@@ -65,9 +70,16 @@ public class BehaviourAnalysisServiceImpl implements BehaviourAnalysisService {
         // An event both ignored and dismissed counts once towards the ignore rate
         Set<Long> ignoredOrDismissedEventIds = eventIdsWithAction(allLogs, ownEventIds,
                 EnumSet.of(BehaviourAction.IGNORE, BehaviourAction.DISMISS));
+        // A FIX is a claim; only fixes a verification source confirmed count as verified
+        Set<Long> verifiedFixEventIds = eventIdsWithAction(
+                allLogs.stream()
+                        .filter(l -> l.getFixVerification() == FixVerificationStatus.VERIFIED)
+                        .toList(),
+                ownEventIds, EnumSet.of(BehaviourAction.FIX));
 
         // Rates are calculated based on the total number of security events assigned to the developer
         double fixRate = calculateRate(fixedEventIds.size(), totalSecurityEvents);
+        double verifiedFixRate = calculateRate(verifiedFixEventIds.size(), totalSecurityEvents);
         double ignoreRate = calculateRate(ignoredOrDismissedEventIds.size(), totalSecurityEvents);
         double reopenRate = calculateRate(reopenedEventIds.size(), totalSecurityEvents);
 
@@ -112,6 +124,8 @@ public class BehaviourAnalysisServiceImpl implements BehaviourAnalysisService {
                 .dismissedCount((long) dismissedEventIds.size())
                 .reopenedCount((long) reopenedEventIds.size())
                 .fixRate(fixRate)
+                .verifiedFixCount((long) verifiedFixEventIds.size())
+                .verifiedFixRate(verifiedFixRate)
                 .ignoreRate(ignoreRate)
                 .reopenRate(reopenRate)
                 .highSeverityFixRate(highSeverityFixRate)

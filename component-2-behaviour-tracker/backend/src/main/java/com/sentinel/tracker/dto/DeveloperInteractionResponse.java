@@ -2,6 +2,7 @@ package com.sentinel.tracker.dto;
 
 import com.sentinel.tracker.entity.BehaviourLog;
 import com.sentinel.tracker.enums.BehaviourAction;
+import com.sentinel.tracker.enums.FixVerificationStatus;
 import lombok.Builder;
 import lombok.Data;
 
@@ -23,6 +24,8 @@ public class DeveloperInteractionResponse {
     private String sessionId;
     private String source;
     private String metadata;
+    /** FIX actions only: CLAIMED, VERIFIED or STILL_VULNERABLE. Null for other actions. */
+    private FixVerificationStatus fixVerification;
     private LocalDateTime createdAt;
 
     /**
@@ -39,6 +42,7 @@ public class DeveloperInteractionResponse {
                 .sessionId(log.getSessionId())
                 .source(log.getSource())
                 .metadata(log.getContextMetadata())
+                .fixVerification(log.getFixVerification())
                 .createdAt(log.getCreatedAt())
                 .build();
     }

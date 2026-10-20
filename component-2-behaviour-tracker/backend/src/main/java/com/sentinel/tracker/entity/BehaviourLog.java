@@ -1,6 +1,7 @@
 package com.sentinel.tracker.entity;
 
 import com.sentinel.tracker.enums.BehaviourAction;
+import com.sentinel.tracker.enums.FixVerificationStatus;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -86,6 +87,16 @@ public class BehaviourLog {
 
     @Column(name = "source", length = 255)
     private String source;
+
+    // ── Fix verification ──────────────────────────────────────────────────────
+
+    /**
+     * Whether this FIX claim is verified (CLAIMED, VERIFIED or STILL_VULNERABLE).
+     * Null for every other action.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "fix_verification", length = 50)
+    private FixVerificationStatus fixVerification;
 
     // ── Audit ─────────────────────────────────────────────────────────────────
 

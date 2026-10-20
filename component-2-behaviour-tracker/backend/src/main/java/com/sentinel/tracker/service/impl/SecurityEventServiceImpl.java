@@ -1,5 +1,6 @@
 package com.sentinel.tracker.service.impl;
 
+import com.sentinel.tracker.analysis.LifecycleHashChain;
 import com.sentinel.tracker.dto.CreateSecurityEventRequest;
 import com.sentinel.tracker.dto.SecurityEventResponse;
 import com.sentinel.tracker.entity.Developer;
@@ -25,6 +26,7 @@ import java.util.stream.Collectors;
  *
  * Creating a security event also records its initial lifecycle history entry
  * (previousStatus = null, newStatus = DETECTED, changedBy = SYSTEM) in the same transaction.
+ * That entry starts the event's hash chain ({@link LifecycleHashChain#GENESIS_HASH}).
  */
 @Service
 @RequiredArgsConstructor
@@ -48,9 +50,10 @@ public class SecurityEventServiceImpl implements SecurityEventService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Developer", "id", request.getDeveloperId()));
 
-        LocalDateTime detectedAt = request.getDetectedAt() != null
+        // Microsecond precision, so the event and its first history entry store the same time
+        LocalDateTime detectedAt = LifecycleHashChain.normalise(request.getDetectedAt() != null
                 ? request.getDetectedAt()
-                : LocalDateTime.now();
+                : LocalDateTime.now());
 
         SecurityEvent event = SecurityEvent.builder()
                 .developer(developer)
@@ -73,6 +76,7 @@ public class SecurityEventServiceImpl implements SecurityEventService {
                 .changedAt(detectedAt)
                 .changedBy(SYSTEM_ACTOR)
                 .build();
+        LifecycleHashChain.seal(initialHistory, LifecycleHashChain.GENESIS_HASH);
         lifecycleHistoryRepository.save(initialHistory);
 
         log.info("SecurityEvent created with id: {}", saved.getId());

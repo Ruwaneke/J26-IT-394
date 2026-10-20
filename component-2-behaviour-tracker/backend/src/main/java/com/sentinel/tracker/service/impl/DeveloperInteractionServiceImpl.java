@@ -1,5 +1,6 @@
 package com.sentinel.tracker.service.impl;
 
+import com.sentinel.tracker.analysis.LifecycleHashChain;
 import com.sentinel.tracker.dto.CreateDeveloperInteractionRequest;
 import com.sentinel.tracker.dto.DeveloperInteractionResponse;
 import com.sentinel.tracker.entity.BehaviourLog;
@@ -7,6 +8,7 @@ import com.sentinel.tracker.entity.Developer;
 import com.sentinel.tracker.entity.SecurityEvent;
 import com.sentinel.tracker.entity.VulnerabilityLifecycleHistory;
 import com.sentinel.tracker.enums.BehaviourAction;
+import com.sentinel.tracker.enums.FixVerificationStatus;
 import com.sentinel.tracker.enums.SecurityEventStatus;
 import com.sentinel.tracker.exception.AccessDeniedException;
 import com.sentinel.tracker.exception.InvalidStatusTransitionException;
@@ -16,6 +18,7 @@ import com.sentinel.tracker.repository.DeveloperRepository;
 import com.sentinel.tracker.repository.SecurityEventRepository;
 import com.sentinel.tracker.repository.VulnerabilityLifecycleHistoryRepository;
 import com.sentinel.tracker.service.DeveloperInteractionService;
+import com.sentinel.tracker.service.FixVerificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -34,11 +38,21 @@ import java.util.stream.Collectors;
  *   <li>Loads and validates the developer and security event.</li>
  *   <li>Checks the developer owns the security event (owner check).</li>
  *   <li>Resolves the target {@link SecurityEventStatus} from the {@link BehaviourAction}.</li>
- *   <li>Validates the lifecycle transition against {@link SecurityEventStatus#canTransitionTo}.</li>
- *   <li>Persists the {@link BehaviourLog} with {@code timeSinceDetectionSeconds}.</li>
- *   <li>Updates the {@link SecurityEvent#currentStatus}.</li>
- *   <li>Appends a {@link VulnerabilityLifecycleHistory} entry.</li>
+ *   <li>Validates the lifecycle transition against {@link SecurityEventStatus#canTransitionTo},
+ *       unless the target equals the current status.</li>
+ *   <li>Persists the {@link BehaviourLog} with {@code timeSinceDetectionSeconds}. A FIX also
+ *       records its {@link FixVerificationStatus} from {@link FixVerificationService}.</li>
+ *   <li>If the status changes: updates {@link SecurityEvent#currentStatus} and appends a
+ *       {@link VulnerabilityLifecycleHistory} entry, hash-chained to the event's latest entry
+ *       ({@link LifecycleHashChain}).</li>
  * </ol>
+ *
+ * <p>An interaction is not the same as a status change. A same-status action (a second
+ * {@code OPEN}, or {@code DISMISS} on an {@code IGNORED} event) is a legitimate developer
+ * action: it is logged, but the status stays unchanged and no history entry is written.
+ *
+ * <p>A FIX is a claim, not proof. The event moves to FIXED either way; whether the fix is
+ * verified is recorded on the log ({@code fixVerification}) and never changes the lifecycle.
  */
 @Service
 @RequiredArgsConstructor
@@ -50,6 +64,7 @@ public class DeveloperInteractionServiceImpl implements DeveloperInteractionServ
     private final DeveloperRepository developerRepository;
     private final SecurityEventRepository securityEventRepository;
     private final VulnerabilityLifecycleHistoryRepository lifecycleHistoryRepository;
+    private final FixVerificationService fixVerificationService;
 
     @Override
     @Transactional
@@ -77,9 +92,10 @@ public class DeveloperInteractionServiceImpl implements DeveloperInteractionServ
         // 4. Resolve target status from action
         SecurityEventStatus targetStatus = resolveTargetStatus(request.getAction());
 
-        // 5. Validate lifecycle transition
+        // 5. Validate lifecycle transition (a same-status action is not a transition)
         SecurityEventStatus currentStatus = event.getCurrentStatus();
-        if (!currentStatus.canTransitionTo(targetStatus)) {
+        boolean statusChanges = targetStatus != currentStatus;
+        if (statusChanges && !currentStatus.canTransitionTo(targetStatus)) {
             throw new InvalidStatusTransitionException(
                     String.format("Security event %d cannot move from %s to %s (action %s); "
                                     + "allowed next statuses: %s",
@@ -96,7 +112,13 @@ public class DeveloperInteractionServiceImpl implements DeveloperInteractionServ
                 : LocalDateTime.now();
         long timeSinceDetectionSeconds = ChronoUnit.SECONDS.between(event.getDetectedAt(), actionTimestamp);
 
-        // 7. Persist BehaviourLog
+        // 7. A FIX is a claim; record whether it is verified (CLAIMED when nothing says so)
+        FixVerificationStatus fixVerification = request.getAction() == BehaviourAction.FIX
+                ? Objects.requireNonNullElse(
+                        fixVerificationService.verifyFix(event, actionTimestamp), FixVerificationStatus.CLAIMED)
+                : null;
+
+        // 8. Persist BehaviourLog
         BehaviourLog log = BehaviourLog.builder()
                 .developer(developer)
                 .securityEvent(event)
@@ -106,26 +128,33 @@ public class DeveloperInteractionServiceImpl implements DeveloperInteractionServ
                 .timeSinceDetectionSeconds(timeSinceDetectionSeconds)
                 .sessionId(request.getSessionId())
                 .source(request.getSource())
+                .fixVerification(fixVerification)
                 .build();
         BehaviourLog saved = behaviourLogRepository.save(log);
 
-        // 8. Update security event status
-        event.setCurrentStatus(targetStatus);
-        securityEventRepository.save(event);
+        if (statusChanges) {
+            // 9. Update security event status
+            event.setCurrentStatus(targetStatus);
+            securityEventRepository.save(event);
 
-        // 9. Append lifecycle history entry
-        VulnerabilityLifecycleHistory history = VulnerabilityLifecycleHistory.builder()
-                .securityEvent(event)
-                .previousStatus(currentStatus)
-                .newStatus(targetStatus)
-                .changedAt(actionTimestamp)
-                .changedBy(developer.getDeveloperIdentifier() != null
-                        ? developer.getDeveloperIdentifier()
-                        : String.valueOf(developer.getId()))
-                .build();
-        lifecycleHistoryRepository.save(history);
+            // 10. Append lifecycle history entry, chained to the event's latest entry. The event
+            //     row lock from step 2 is still held, so concurrent actions cannot fork the chain.
+            VulnerabilityLifecycleHistory history = VulnerabilityLifecycleHistory.builder()
+                    .securityEvent(event)
+                    .previousStatus(currentStatus)
+                    .newStatus(targetStatus)
+                    .changedAt(actionTimestamp)
+                    .changedBy(developer.getDeveloperIdentifier() != null
+                            ? developer.getDeveloperIdentifier()
+                            : String.valueOf(developer.getId()))
+                    .build();
+            LifecycleHashChain.seal(history, LifecycleHashChain.nextPrevHash(
+                    lifecycleHistoryRepository.findFirstBySecurityEventIdOrderByIdDesc(event.getId())));
+            lifecycleHistoryRepository.save(history);
+        }
 
-        this.log.info("Developer interaction created with id: {}", saved.getId());
+        this.log.info("Developer interaction created with id: {} (status {})", saved.getId(),
+                statusChanges ? currentStatus + " -> " + targetStatus : "unchanged " + currentStatus);
         return DeveloperInteractionResponse.from(saved);
     }
 

@@ -26,6 +26,11 @@ public class DeveloperBehaviourSummaryResponse {
     private Double reopenRate;
     /** Null when the developer has no HIGH/CRITICAL security events (not applicable). */
     private Double highSeverityFixRate;
+
+    // Fixes confirmed by a verification source. fixedCount and fixRate count claimed fixes
+    // (every FIX action), so these are never larger than them.
+    private Long verifiedFixCount;
+    private Double verifiedFixRate;
     
     private Double averageResponseTimeSeconds;
     private Long repeatedVulnerabilityCount;

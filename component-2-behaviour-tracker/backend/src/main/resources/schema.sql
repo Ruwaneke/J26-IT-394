@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS behaviour_logs (
     time_since_detection_seconds BIGINT,
     session_id VARCHAR(255),
     source VARCHAR(255),
+    fix_verification VARCHAR(50),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -61,6 +62,13 @@ CREATE INDEX IF NOT EXISTS idx_bl_developer_id ON behaviour_logs(developer_id);
 CREATE INDEX IF NOT EXISTS idx_bl_security_event_id ON behaviour_logs(security_event_id);
 CREATE INDEX IF NOT EXISTS idx_bl_timestamp ON behaviour_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_bl_action_type ON behaviour_logs(action_type);
+
+-- Fix-verification column for databases created before claimed and verified fixes were
+-- told apart (TASKS P1-6). FIX rows written before it were never verified, so they are
+-- marked CLAIMED; other actions keep NULL. Safe to re-run.
+ALTER TABLE behaviour_logs ADD COLUMN IF NOT EXISTS fix_verification VARCHAR(50);
+UPDATE behaviour_logs SET fix_verification = 'CLAIMED'
+    WHERE action_type = 'FIX' AND fix_verification IS NULL;
 
 -- 4. Table: vulnerability_lifecycle_history
 CREATE TABLE IF NOT EXISTS vulnerability_lifecycle_history (
@@ -70,8 +78,16 @@ CREATE TABLE IF NOT EXISTS vulnerability_lifecycle_history (
     new_status VARCHAR(50) NOT NULL,
     changed_at TIMESTAMP NOT NULL,
     changed_by VARCHAR(255) NOT NULL,
+    prev_hash VARCHAR(64),
+    entry_hash VARCHAR(64),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_vlh_security_event_id ON vulnerability_lifecycle_history(security_event_id);
 CREATE INDEX IF NOT EXISTS idx_vlh_changed_at ON vulnerability_lifecycle_history(changed_at);
+
+-- Hash-chain columns for databases created before the tamper-evident history (TASKS P2-9).
+-- Existing rows keep NULL hashes and are reported as UNCHAINED; they are deliberately not
+-- backfilled, because that would vouch for history that was never protected.
+ALTER TABLE vulnerability_lifecycle_history ADD COLUMN IF NOT EXISTS prev_hash VARCHAR(64);
+ALTER TABLE vulnerability_lifecycle_history ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64);
