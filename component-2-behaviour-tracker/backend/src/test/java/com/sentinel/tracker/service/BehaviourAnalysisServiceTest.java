@@ -5,6 +5,7 @@ import com.sentinel.tracker.entity.BehaviourLog;
 import com.sentinel.tracker.entity.Developer;
 import com.sentinel.tracker.entity.SecurityEvent;
 import com.sentinel.tracker.enums.BehaviourAction;
+import com.sentinel.tracker.enums.FixVerificationStatus;
 import com.sentinel.tracker.enums.Severity;
 import com.sentinel.tracker.repository.BehaviourLogRepository;
 import com.sentinel.tracker.repository.DeveloperRepository;
@@ -294,5 +295,50 @@ class BehaviourAnalysisServiceTest {
         assertThat(response.getFixRate()).isEqualTo(80.0);              // 4 of 5 events
         assertThat(response.getHighSeverityFixRate()).isEqualTo(66.7);  // 2 of 3 HIGH/CRITICAL events
         assertThat(response.getBehaviourClassification()).isEqualTo("SECURITY_NEUTRAL");
+    }
+
+    @Test
+    void claimedFixes_countAsFixesButNotAsVerifiedFixes() {
+        // 4 events. e1: FIX verified. e2: FIX claimed, then FIX verified (counts once).
+        // e3: FIX claimed only. e4: FIX still vulnerable. Fixes claimed on 4 of 4, verified on 2 of 4.
+        SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.HIGH);
+        SecurityEvent e2 = createEvent(2L, "XSS", Severity.MEDIUM);
+        SecurityEvent e3 = createEvent(3L, "XSS", Severity.LOW);
+        SecurityEvent e4 = createEvent(4L, "HARDCODED_SECRET", Severity.HIGH);
+
+        createLog(e1, BehaviourAction.FIX, 10L).setFixVerification(FixVerificationStatus.VERIFIED);
+        createLog(e2, BehaviourAction.FIX, 10L).setFixVerification(FixVerificationStatus.CLAIMED);
+        createLog(e2, BehaviourAction.FIX, 20L).setFixVerification(FixVerificationStatus.VERIFIED);
+        createLog(e3, BehaviourAction.FIX, 10L).setFixVerification(FixVerificationStatus.CLAIMED);
+        createLog(e4, BehaviourAction.FIX, 10L).setFixVerification(FixVerificationStatus.STILL_VULNERABLE);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getFixedCount()).isEqualTo(4L);
+        assertThat(response.getFixRate()).isEqualTo(100.0);
+        assertThat(response.getVerifiedFixCount()).isEqualTo(2L);
+        assertThat(response.getVerifiedFixRate()).isEqualTo(50.0);
+        // The classification still uses claimed fixes (unchanged until agreed otherwise)
+        assertThat(response.getHighSeverityFixRate()).isEqualTo(100.0);
+        assertThat(response.getBehaviourClassification()).isEqualTo("SECURITY_RESPONSIVE");
+    }
+
+    @Test
+    void noVerifiedFixes_givesZeroVerifiedFixCountAndRate() {
+        SecurityEvent e1 = createEvent(1L, "SQL_INJECTION", Severity.HIGH);
+        createEvent(2L, "XSS", Severity.MEDIUM);
+        createEvent(3L, "XSS", Severity.MEDIUM);
+
+        // A legacy FIX log without a verification value is not a verified fix
+        createLog(e1, BehaviourAction.FIX, 10L);
+        createLog(e1, BehaviourAction.REOPEN, 20L);
+
+        prepareMocks();
+
+        DeveloperBehaviourSummaryResponse response = analysisService.getDeveloperBehaviourSummary(1L);
+        assertThat(response.getFixRate()).isEqualTo(33.3);
+        assertThat(response.getVerifiedFixCount()).isZero();
+        assertThat(response.getVerifiedFixRate()).isEqualTo(0.0);
     }
 }

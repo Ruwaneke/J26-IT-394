@@ -53,6 +53,9 @@ class DeveloperInteractionServiceTest {
     @Mock
     private VulnerabilityLifecycleHistoryRepository lifecycleHistoryRepository;
 
+    @Mock
+    private FixVerificationService fixVerificationService;
+
     @InjectMocks
     private DeveloperInteractionServiceImpl interactionService;
 

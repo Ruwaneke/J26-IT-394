@@ -1,5 +1,6 @@
 package com.sentinel.tracker.service;
 
+import com.sentinel.tracker.analysis.LifecycleHashChain;
 import com.sentinel.tracker.dto.CreateSecurityEventRequest;
 import com.sentinel.tracker.dto.SecurityEventResponse;
 import com.sentinel.tracker.entity.Developer;
@@ -158,6 +159,23 @@ class SecurityEventServiceTest {
         assertThat(history.getNewStatus()).isEqualTo(SecurityEventStatus.DETECTED);
         assertThat(history.getChangedBy()).isEqualTo("SYSTEM");
         assertThat(history.getChangedAt()).isEqualTo(detectedAt);
+    }
+
+    @Test
+    @DisplayName("createSecurityEvent – initial history entry starts the hash chain at the genesis value")
+    void createSecurityEvent_initialHistoryStartsHashChain() {
+        when(developerRepository.findById(1L)).thenReturn(Optional.of(developer));
+        when(securityEventRepository.save(any(SecurityEvent.class))).thenReturn(securityEvent);
+
+        securityEventService.createSecurityEvent(validRequest());
+
+        ArgumentCaptor<VulnerabilityLifecycleHistory> captor =
+                ArgumentCaptor.forClass(VulnerabilityLifecycleHistory.class);
+        verify(lifecycleHistoryRepository).save(captor.capture());
+        VulnerabilityLifecycleHistory history = captor.getValue();
+        assertThat(history.getPrevHash()).isEqualTo(LifecycleHashChain.GENESIS_HASH);
+        assertThat(history.getEntryHash())
+                .isEqualTo(LifecycleHashChain.computeEntryHash(LifecycleHashChain.GENESIS_HASH, history));
     }
 
     @Test
