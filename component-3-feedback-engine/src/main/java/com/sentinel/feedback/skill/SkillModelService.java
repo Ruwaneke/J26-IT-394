@@ -67,7 +67,8 @@ public class SkillModelService {
                 update(current.mastery(), event),
                 current.eventsCount() + 1,
                 now);
-        store.save(updated);
+        store.save(updated, new SkillEventEntry(devHash, cweId, event, current.mastery(),
+                updated.mastery(), now));
         return updated;
     }
 
