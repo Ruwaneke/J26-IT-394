@@ -4,6 +4,7 @@
   "description": "Real-time intelligent code security analyzer — detects vulnerabilities as you type",
   "version": "0.1.0",
   "publisher": "sentinel-research",
+  "icon": "resources/sentinel-logo.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -36,7 +37,10 @@
       {
         "command": "sentinel.showDashboard",
         "title": "Sentinel: Show Security Dashboard",
-        "icon": "$(shield)"
+        "icon": {
+          "light": "resources/sentinel-logo.png",
+          "dark": "resources/sentinel-logo.png"
+        }
       },
       {
         "command": "sentinel.analyzeDocument",
@@ -69,6 +73,21 @@
           "default": true,
           "description": "Enable or disable Sentinel real-time analysis"
         },
+        "sentinel.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "enumDescriptions": [
+            "Follow the active VS Code colour theme",
+            "Always use light mode",
+            "Always use dark mode"
+          ],
+          "default": "auto",
+          "description": "Colour mode for Sentinel's dashboards and panels"
+        },
         "sentinel.debounceMs": {
           "type": "number",
           "default": 400,
@@ -94,12 +113,55 @@
           "default": "http://localhost:4000",
           "description": "URL of the Intelligent Feedback Engine (Component 3) for AI-generated explanations and personalised fixes"
         },
+        "sentinel.api.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the local Sentinel API server so Component 2 (Behaviour Tracker) can pull detection, behaviour, feedback and shift data"
+        },
+        "sentinel.api.port": {
+          "type": "number",
+          "default": 7420,
+          "description": "Port for the local Sentinel API server (bound to 127.0.0.1 only)"
+        },
+        "sentinel.api.key": {
+          "type": "string",
+          "default": "",
+          "description": "Optional shared secret. When set, Component 2 must send it in the X-Sentinel-Api-Key header"
+        },
         "sentinel.minConfidence": {
           "type": "number",
           "default": 0.7,
           "minimum": 0,
           "maximum": 1,
           "description": "Minimum detection confidence threshold (0.0–1.0). Findings below this score are hidden. Lower = more alerts, higher = fewer but more precise."
+        },
+        "sentinel.notifications.popups": {
+          "type": "string",
+          "enum": [
+            "all",
+            "important",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Show a VS Code pop-up for every Sentinel notification",
+            "Only warnings and critical alerts",
+            "No pop-ups; use the bell in the dashboard"
+          ],
+          "default": "all",
+          "description": "Which Sentinel notifications appear as VS Code pop-ups"
+        },
+        "sentinel.notifications.shiftReminderMinutes": {
+          "type": "number",
+          "enum": [
+            0,
+            5,
+            10,
+            15,
+            30,
+            60
+          ],
+          "default": 15,
+          "description": "Remind assigned developers and the supervisor this many minutes before a shift starts (0 = off)"
         }
       }
     }

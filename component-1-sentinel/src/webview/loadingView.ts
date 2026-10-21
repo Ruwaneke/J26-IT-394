@@ -5,6 +5,8 @@
  * from Neon PostgreSQL. Matches the dark glassmorphism style of the login view.
  */
 
+import { THEME_CSS, themeHtmlAttrs } from './theme.js';
+
 function escHtml(s: string): string {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -24,15 +26,16 @@ export function buildLoadingHtml(
     : `<div class="logo-box">🛡️</div>`;
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" ${themeHtmlAttrs()}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src ${cspSource} data: *;">
 <title>Sentinel — Loading</title>
 <style>
+${THEME_CSS}
 :root {
-  --bg-primary: #090d16;
+  --bg-primary: var(--bg-app);
   --accent-cyan: #06b6d4;
   --accent-blue: #3b82f6;
   --accent-emerald: #10b981;
@@ -43,7 +46,7 @@ body {
   background: var(--bg-primary);
   min-height: 100vh;
   display: flex; align-items: center; justify-content: center;
-  overflow: hidden; color: #e6edf3; position: relative;
+  overflow: hidden; color: var(--text-1); position: relative;
 }
 body::before {
   content: ''; position: fixed; inset: 0; pointer-events: none;
@@ -61,7 +64,7 @@ body::before {
 .ring-wrap { position: relative; width: 132px; height: 132px; margin: 0 auto 28px; }
 .ring {
   position: absolute; inset: 0; border-radius: 50%;
-  border: 3px solid rgba(255,255,255,0.07);
+  border: 3px solid rgba(var(--ink), 0.07);
   border-top-color: var(--accent-cyan);
   border-right-color: var(--accent-blue);
   animation: spin 1.1s linear infinite;
@@ -78,10 +81,10 @@ body::before {
   font-size: 40px; animation: pulse 2.4s ease-in-out infinite;
 }
 h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 8px; }
-p  { font-size: 13px; color: #8b949e; }
+p  { font-size: 13px; color: var(--text-2); }
 .dots::after { content: ''; animation: dots 1.5s steps(4, end) infinite; }
 .bar { width: 220px; height: 4px; margin: 26px auto 0; border-radius: 4px;
-  background: rgba(255,255,255,0.07); overflow: hidden; }
+  background: rgba(var(--ink), 0.07); overflow: hidden; }
 .bar::before { content: ''; display: block; height: 100%; width: 40%; border-radius: 4px;
   background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue), var(--accent-emerald));
   animation: slide 1.4s ease-in-out infinite; }

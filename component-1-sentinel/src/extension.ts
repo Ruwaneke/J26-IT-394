@@ -28,6 +28,12 @@ import { buildAdminDashboardHtml } from './webview/adminDashboard.js';
 import { AIEnhancedAnalyzer, AIEnhancedAnalyzerConfig } from './ai/aiEnhancedAnalyzer.js';
 import { DeveloperLearningStore } from './ai/developerLearningStore.js';
 import { ProjectStore, SessionFinding } from './data/projectStore.js';
+import { SentinelApiServer, SentinelApiServerOptions } from './api/sentinelApiServer.js';
+import { computeDeveloperInsights } from './analytics/developerInsights.js';
+import { setThemePreference, setVsCodeThemeKind, ThemePreference } from './webview/theme.js';
+import { DatabaseAdminService, isAdminTable, TABLES } from './data/databaseAdminService.js';
+import { NotificationService, Principal, NotificationLevel } from './notifications/notificationService.js';
+import { Shift } from './data/projectStore.js';
 
 // ─── Module-level instances (kept alive for the extension lifetime) ─────────
 
@@ -43,6 +49,10 @@ let eventClient: SecurityEventClient;
 let recordStore: DeveloperRecordStore;
 let authManager: AuthManager;
 let outputChannel: vscode.OutputChannel;
+let apiServer: SentinelApiServer | undefined;
+let notifications: NotificationService | undefined;
+let statusBar: vscode.StatusBarItem;
+let apiServerError: string | null = null;
 let debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
 // Per-file finding cache (used by code actions)
@@ -105,6 +115,26 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  // ── Light / dark theme for all webviews ──────────────────────────────────────
+  syncThemeFromVsCode();
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveColorTheme(() => syncThemeFromVsCode()),
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('sentinel.theme')) {
+        syncThemeFromVsCode();
+        void refreshDashboard();
+      }
+    }),
+  );
+
+  // ── Component 2 data API (pull model) ────────────────────────────────────────
+  startApiServer();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('sentinel.api')) { void restartApiServer(); }
+    })
+  );
+
   // ── Silently restore GitHub session (no prompt shown) ────────────────────────
   // If the developer was previously signed in via GitHub, restore their
   // session automatically. Only runs if no session already exists in state.
@@ -164,7 +194,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Register hover provider ──────────────────────────────────────────────
 
-  const hoverProvider = new SentinelHoverProvider(diagnosticManager);
+  const hoverProvider = new SentinelHoverProvider(diagnosticManager, logoFileUri());
   context.subscriptions.push(
     vscode.languages.registerHoverProvider({ scheme: 'file' }, hoverProvider)
   );
@@ -253,12 +283,31 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   // Status bar item
-  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.text = '$(shield) Sentinel';
   statusBar.tooltip = 'Sentinel Security — Click to show dashboard';
   statusBar.command = 'sentinel.showDashboard';
   statusBar.show();
   context.subscriptions.push(statusBar);
+
+  // ── System-wide notifications, background refresh & scheduled shift checks ──
+  notifications = new NotificationService(context, currentPrincipal, section => {
+    showDashboard(context);
+    if (section) { setTimeout(() => void dashboardPanel?.webview.postMessage({ command: 'NAVIGATE', section }), 600); }
+  }, log);
+  notifications.onChange((_items, fresh) => {
+    pushNotifications(fresh);
+    updateStatusBar();
+    // Shift / project changes made by someone else: reload the shared data and re-render.
+    if (fresh.some(n => n.category === 'shift' || n.category === 'project')) {
+      void projectStore.hydrate().then(() => refreshDashboard());
+    }
+  });
+  notifications.start(30000);
+  context.subscriptions.push(notifications);
+  const backgroundTimer = setInterval(() => void backgroundTick(), 60000);
+  context.subscriptions.push({ dispose: () => clearInterval(backgroundTimer) });
+  setTimeout(() => void backgroundTick(), 8000);
 
   log(`Session: ${eventClient.getSessionId()}`);
   log(`Rules loaded: ${analyzer.getRules().map(r => r.ruleName).join(', ')}`);
@@ -270,6 +319,8 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   diagnosticManager.dispose();
   eventClient.dispose();
+  void apiServer?.stop();
+  notifications?.dispose();
   recordStore.dispose();
   outputChannel.dispose();
   void NeonDatabaseService.getInstance().close();
@@ -355,6 +406,13 @@ async function analyzeDocument(
         ruleId:      finding.detectedByRule ?? 'unknown',
       };
       projectStore.addFindingToSession(activeShiftSessionId, sf);
+      if (finding.severity === 'CRITICAL') {
+        const sess = projectStore.getAllSessions().find(x => x.id === activeShiftSessionId);
+        if (sess) {
+          void notifications?.criticalFinding(finding.id, finding.type, path.basename(finding.fileName), finding.lineNumber,
+            sess.developerDisplayName, sess, projectStore.getProject(sess.projectId));
+        }
+      }
     }
   }
 
@@ -501,10 +559,11 @@ function handleExplainAction(findingId: string): void {
     'sentinel.explain',
     `Sentinel: ${finding.type}`,
     vscode.ViewColumn.Beside,
-    { enableScripts: false },
+    { enableScripts: false, localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'resources')] },
   );
+  panel.iconPath = logoFileUri();
 
-  panel.webview.html = buildExplainHtml(finding, meta);
+  panel.webview.html = buildExplainHtml(finding, meta, panel.webview.asWebviewUri(logoFileUri()).toString(), panel.webview.cspSource);
   void eventClient.reportAction(finding, DeveloperAction.EXPLANATION_VIEWED);
   log(`[Action] EXPLANATION_VIEWED — ${finding.type} at line ${finding.lineNumber}`);
 }
@@ -521,9 +580,10 @@ function handleFixAction(findingId: string): void {
       'sentinel.fix',
       `Sentinel Fix: ${finding.type}`,
       vscode.ViewColumn.Beside,
-      { enableScripts: false },
+      { enableScripts: false, localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'resources')] },
     );
-    panel.webview.html = buildFixHtml(finding, meta);
+    panel.iconPath = logoFileUri();
+    panel.webview.html = buildFixHtml(finding, meta, panel.webview.asWebviewUri(logoFileUri()).toString(), panel.webview.cspSource);
   }
 
   void eventClient.reportAction(finding, DeveloperAction.SECURE_EXAMPLE_VIEWED);
@@ -559,6 +619,515 @@ function findFindingById(findingId: string): SecurityFinding | undefined {
     }
   }
   return undefined;
+}
+
+// ─── Administrator & database management messages ────────────────────────────
+
+const dbAdmin = new DatabaseAdminService();
+
+/** Native modal confirmation — cannot be spoofed or skipped by the webview. */
+async function confirmDestructive(message: string, detail: string, action: string): Promise<boolean> {
+  const choice = await vscode.window.showWarningMessage(message, { modal: true, detail }, action);
+  return choice === action;
+}
+
+async function auditAdmin(actionType: string, details: Record<string, unknown>): Promise<void> {
+  const s = authManager.getSession();
+  await NeonDatabaseService.getInstance().logActivity({
+    userId: s?.userId, username: s?.username, githubUsername: s?.githubUsername,
+    actionType, details,
+  });
+  log(`[Admin] ${actionType} ${JSON.stringify(details)}`);
+}
+
+function postToDashboard(msg: Record<string, unknown>): void {
+  void dashboardPanel?.webview.postMessage(msg);
+}
+
+async function handleAdminMessage(message: { command: string; [key: string]: any }): Promise<void> {
+  // Server-side authorisation: the webview UI is not a security boundary.
+  const session = authManager.getSession();
+  if (session?.role !== 'administrator') {
+    log(`[Admin] Rejected ${message.command}: caller is not an administrator.`);
+    postToDashboard({ command: 'DB_RESULT', op: message.command, success: false, message: 'Administrator access required.' });
+    return;
+  }
+
+  const op = message.command;
+  const reply = (success: boolean, msg: string, data?: unknown) =>
+    postToDashboard({ command: 'DB_RESULT', op, success, message: msg, data });
+
+  try {
+    switch (op) {
+      // ── Users ──
+      case 'ADMIN_ADD_USER': {
+        const result = await authManager.addUser(
+          String(message.username), String(message.password),
+          message.role as 'developer' | 'supervisor' | 'administrator',
+          String(message.displayName), String(message.email),
+        );
+        if (result.success) { await auditAdmin('ADMIN_USER_ADDED', { username: message.username, role: message.role }); }
+        postToDashboard({ command: 'ADMIN_ADD_RESULT', ...result });
+        return;
+      }
+      case 'ADMIN_REMOVE_USER': {
+        if (message.userId === session.userId) {
+          postToDashboard({ command: 'ADMIN_USER_RESULT', success: false, message: 'You cannot remove your own account.' });
+          return;
+        }
+        if (!await confirmDestructive(`Remove user "${message.username}"?`,
+          'The account is deleted. Their vulnerability records and activity history are kept.', 'Remove user')) { return; }
+        const result = await authManager.removeUser(String(message.userId));
+        if (result.success) { await auditAdmin('ADMIN_USER_REMOVED', { userId: message.userId, username: message.username }); }
+        postToDashboard({ command: 'ADMIN_USER_RESULT', ...result });
+        return;
+      }
+      case 'ADMIN_UPDATE_USER': {
+        const role = ['developer', 'supervisor', 'administrator'].includes(message.role) ? message.role : undefined;
+        if (message.userId === session.userId && role && role !== 'administrator') {
+          postToDashboard({ command: 'ADMIN_USER_RESULT', success: false, message: 'You cannot remove your own administrator role.' });
+          return;
+        }
+        const result = await NeonDatabaseService.getInstance().updateUser(String(message.userId), {
+          role, displayName: String(message.displayName ?? ''), email: typeof message.email === 'string' ? message.email : undefined,
+        });
+        if (result.success) {
+          await auditAdmin('ADMIN_USER_UPDATED', { userId: message.userId, role });
+          if (role) {
+            void notifications?.notify({
+              level: 'info', category: 'system', title: 'Your Sentinel role changed',
+              message: `An administrator set your role to ${role}. Sign out and back in to see the new dashboard.`,
+              recipientIds: [String(message.userId)], recipientRoles: [], createdBy: session.displayName,
+            });
+          }
+        }
+        postToDashboard({ command: 'ADMIN_USER_RESULT', ...result });
+        return;
+      }
+      case 'ADMIN_OPEN_SETTINGS':
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:sentinel-research.sentinel');
+        return;
+      case 'ADMIN_SHOW_OUTPUT':
+        outputChannel.show();
+        return;
+      // ── Database: read ──
+      case 'DB_OVERVIEW':
+        return reply(true, '', await dbAdmin.getOverview());
+      case 'DB_PING': {
+        const p = await NeonDatabaseService.getInstance().ping();
+        return reply(p.ok, p.ok ? `Connection OK — ${p.ms} ms round-trip.` : `Connection failed: ${p.error}`);
+      }
+      case 'DB_BROWSE': {
+        if (!isAdminTable(message.table)) { return reply(false, 'Unknown table.'); }
+        const status = typeof message.status === 'string' && message.status ? message.status : undefined;
+        return reply(true, '', await dbAdmin.browse(message.table, {
+          page: Number(message.page) || 1,
+          search: typeof message.search === 'string' ? message.search : '',
+          filterColumn: status ? 'status' : undefined,
+          filterValue: status,
+        }));
+      }
+
+      // ── Database: row edits ──
+      case 'DB_SET_STATUS': {
+        const n = await dbAdmin.setRecordStatus(String(message.recordId), String(message.status));
+        await auditAdmin('ADMIN_DB_STATUS_CHANGED', { recordId: message.recordId, status: message.status });
+        return reply(n > 0, n > 0 ? `Record marked ${message.status}.` : 'Record not found.');
+      }
+      case 'DB_DELETE_ROW': {
+        if (!isAdminTable(message.table)) { return reply(false, 'Unknown table.'); }
+        if (!await confirmDestructive(`Delete this row from ${TABLES[message.table].label}?`,
+          JSON.stringify(message.key), 'Delete row')) { return; }
+        const n = await dbAdmin.deleteRow(message.table, message.key ?? {});
+        await auditAdmin('ADMIN_DB_ROW_DELETED', { table: message.table, key: message.key });
+        return reply(n > 0, n > 0 ? 'Row deleted.' : 'Row not found.');
+      }
+
+      // ── Database: maintenance ──
+      case 'DB_PURGE_LOGS': {
+        const days = Number(message.days);
+        if (!await confirmDestructive(`Purge activity logs older than ${days} days?`, 'This permanently deletes audit history.', 'Purge')) { return; }
+        const n = await dbAdmin.purgeActivityOlderThan(days);
+        await auditAdmin('ADMIN_DB_PURGE_LOGS', { days, deleted: n });
+        return reply(true, `Deleted ${n} activity log entr${n === 1 ? 'y' : 'ies'}.`);
+      }
+      case 'DB_PURGE_RESOLVED': {
+        const days = Number(message.days);
+        if (!await confirmDestructive(`Purge resolved findings not updated for ${days} days?`,
+          'FIXED, IGNORED and FALSE_POSITIVE records are deleted. Developer fix-rate history will change.', 'Purge')) { return; }
+        const n = await dbAdmin.purgeResolvedRecordsOlderThan(days);
+        await auditAdmin('ADMIN_DB_PURGE_RESOLVED', { days, deleted: n });
+        return reply(true, `Deleted ${n} resolved record${n === 1 ? '' : 's'}.`);
+      }
+      case 'DB_DELETE_DEVELOPER': {
+        const dev = String(message.developerId ?? '');
+        if (!dev) { return reply(false, 'Choose a developer.'); }
+        if (!await confirmDestructive(`Delete all data for "${dev}"?`,
+          'All of their vulnerability records and activity logs are permanently deleted. The user account is kept.', 'Delete data')) { return; }
+        const n = await dbAdmin.deleteDeveloperData(dev);
+        recordStore.dispose();
+        await auditAdmin('ADMIN_DB_DEVELOPER_DELETED', { developerId: dev, deleted: n });
+        return reply(true, `Deleted ${n} record${n === 1 ? '' : 's'} for ${dev}.`);
+      }
+      case 'CLEAR_DB':
+      case 'DB_CLEAR': {
+        const table = op === 'CLEAR_DB' ? 'vulnerability_records' : message.table;
+        if (!isAdminTable(table)) { return reply(false, 'Unknown table.'); }
+        const what = message.collection ? `the "${message.collection}" document collection` : `every row in ${TABLES[table].label}`;
+        if (!await confirmDestructive(`Permanently delete ${what}?`, 'This cannot be undone. Export a backup first if you may need this data.', 'Delete everything')) { return; }
+        const n = await dbAdmin.truncate(table, typeof message.collection === 'string' ? message.collection : undefined);
+        if (table === 'vulnerability_records') { recordStore.dispose(); }
+        await auditAdmin('ADMIN_DB_CLEARED', { table, collection: message.collection ?? null, deleted: n });
+        return reply(true, `Deleted ${n} row${n === 1 ? '' : 's'}.`);
+      }
+      case 'DB_VACUUM': {
+        const tables = await dbAdmin.vacuumAnalyze();
+        await auditAdmin('ADMIN_DB_VACUUM', { tables });
+        return reply(true, `VACUUM ANALYZE completed on ${tables.length} tables.`);
+      }
+      case 'DB_MIGRATE': {
+        const ok = await dbAdmin.rerunMigrations();
+        await auditAdmin('ADMIN_DB_MIGRATE', { ok });
+        return reply(ok, ok ? 'Schema verified — all tables and indexes are present.' : 'Migration failed — see the output log.');
+      }
+
+      // ── Database: backup ──
+      case 'DB_EXPORT': {
+        const target = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(path.join(
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? require('os').homedir(),
+            `sentinel-backup-${new Date().toISOString().slice(0, 10)}.json`)),
+          filters: { JSON: ['json'] },
+          saveLabel: 'Export backup',
+        });
+        if (!target) { return; }
+        const dump = await dbAdmin.exportAll();
+        await vscode.workspace.fs.writeFile(target, Buffer.from(JSON.stringify(dump, null, 2), 'utf8'));
+        const counts = Object.fromEntries(Object.entries(dump.tables).map(([k, v]) => [k, v.length]));
+        await auditAdmin('ADMIN_DB_EXPORT', { file: path.basename(target.fsPath), counts });
+        return reply(true, `Backup saved to ${path.basename(target.fsPath)}.`);
+      }
+
+      default:
+        log(`[Admin] Unknown admin command ${op}`);
+    }
+  } catch (err: any) {
+    log(`[Admin] ${op} failed: ${err?.message ?? err}`);
+    reply(false, `${op.replace(/_/g, ' ').toLowerCase()} failed: ${err?.message ?? err}`);
+  }
+}
+
+// ─── Notifications plumbing ───────────────────────────────────────────────────
+
+function currentPrincipal(): Principal | null {
+  const s = authManager?.getSession();
+  if (!s) { return null; }
+  return { userId: s.userId, username: s.username, githubUsername: s.githubUsername, role: s.role, displayName: s.displayName };
+}
+
+function pushNotifications(fresh: Array<{ id: string }> = []): void {
+  if (!dashboardPanel || !notifications) { return; }
+  const p = currentPrincipal();
+  const items = notifications.list().slice(0, 100).map(n => ({
+    id: n.id, level: n.level, category: n.category, title: n.title, message: n.message,
+    createdAt: n.createdAt, section: n.section, unread: !!p && !n.readBy.includes(p.userId),
+  }));
+  const freshIds = new Set(fresh.map(f => f.id));
+  void dashboardPanel.webview.postMessage({
+    command: 'NOTIFICATIONS', items, unread: notifications.unreadCount(),
+    fresh: items.filter(i => freshIds.has(i.id)),
+  });
+}
+
+function updateStatusBar(): void {
+  if (!statusBar) { return; }
+  const n = notifications?.unreadCount() ?? 0;
+  statusBar.text = n > 0 ? `$(shield) Sentinel  $(bell-dot) ${n}` : '$(shield) Sentinel';
+  statusBar.tooltip = n > 0 ? `Sentinel — ${n} unread notification${n === 1 ? '' : 's'}` : 'Sentinel Security — Click to show dashboard';
+}
+
+async function handleNotificationMessage(message: { command: string; [key: string]: any }): Promise<void> {
+  if (!notifications) { return; }
+  switch (message.command) {
+    case 'NOTIFICATIONS_READY':
+      pushNotifications();
+      break;
+    case 'NOTIFICATIONS_MARK_READ':
+      await notifications.markRead(message.ids === 'all' ? 'all' : (Array.isArray(message.ids) ? message.ids.map(String) : []));
+      updateStatusBar();
+      break;
+    case 'NOTIFICATION_OPEN':
+      await notifications.markRead([String(message.id)]);
+      updateStatusBar();
+      break;
+  }
+}
+
+/** Every minute: reload shared project data, restore an in-progress shift, run reminders. */
+async function backgroundTick(): Promise<void> {
+  try {
+    await projectStore.hydrate();
+    const s = authManager?.getSession();
+    if (s && !activeShiftSessionId && s.role === 'developer') {
+      const active = projectStore.getActiveSession(s.githubUsername ?? s.username) ?? projectStore.getActiveSession(s.username);
+      if (active) {
+        activeShiftSessionId = active.id;
+        log(`[Shift] Resumed tracking for active shift session ${active.id}`);
+      }
+    }
+    const minutes = vscode.workspace.getConfiguration('sentinel').get<number>('notifications.shiftReminderMinutes', 15);
+    await notifications?.runScheduledChecks(projectStore.getShifts(), projectStore.getAllSessions(), projectStore.getProjects(), minutes);
+  } catch (err) {
+    log(`[Background] ${err}`);
+  }
+}
+
+// ─── Supervisor actions ───────────────────────────────────────────────────────
+
+const SUPERVISOR_COMMANDS = new Set([
+  'CREATE_PROJECT', 'UPDATE_PROJECT', 'DELETE_PROJECT', 'CREATE_SHIFT', 'UPDATE_SHIFT', 'DELETE_SHIFT',
+  'UPDATE_SHIFT_ASSIGNMENT', 'ANNOUNCE', 'SET_NOTIFICATION_PREFS', 'REPORT_EXPORT', 'REFRESH_SUPERVISOR',
+]);
+
+/** Projects the signed-in supervisor owns (administrators see all). */
+function supervisedProjects(session: { role: string; userId: string; username: string; githubUsername?: string }) {
+  if (session.role === 'administrator') { return projectStore.getProjects(); }
+  const ids = [session.githubUsername, session.username, session.userId].filter(Boolean);
+  return projectStore.getProjects().filter(p => ids.includes(p.supervisorId));
+}
+
+async function handleSupervisorMessage(message: { command: string; [key: string]: any }): Promise<void> {
+  const session = authManager.getSession();
+  const reply = (success: boolean, msg: string) =>
+    void dashboardPanel?.webview.postMessage({ command: 'SUP_RESULT', op: message.command, success, message: msg });
+  if (!session || (session.role !== 'supervisor' && session.role !== 'administrator')) {
+    log(`[Supervisor] Rejected ${message.command}: caller is not a supervisor.`);
+    return reply(false, 'Supervisor access required.');
+  }
+  const by = session.displayName;
+  const owned = (projectId: string) => supervisedProjects(session).find(p => p.id === projectId);
+  const shiftOwned = (shiftId: string): Shift | undefined => {
+    const sh = projectStore.getShift(shiftId);
+    return sh && owned(sh.projectId) ? sh : undefined;
+  };
+  const cleanIds = (v: unknown) => Array.isArray(v) ? [...new Set(v.map(String).filter(Boolean))] : [];
+  const nameOf = async (ids: string[]) => {
+    const users = await NeonDatabaseService.getInstance().getAllUsers();
+    return ids.map(id => users.find(u => u.githubUsername === id || u.username === id)?.displayName ?? id);
+  };
+  const done = async (msg: string) => { reply(true, msg); await refreshDashboard(); };
+
+  try {
+    switch (message.command) {
+      case 'REFRESH_SUPERVISOR':
+        await projectStore.hydrate();
+        return void refreshDashboard();
+
+      case 'CREATE_PROJECT': {
+        const name = String(message.name ?? '').trim();
+        if (!name) { return reply(false, 'Project name is required.'); }
+        const project = projectStore.createProject(name, String(message.description ?? ''),
+          session.githubUsername ?? session.username, session.displayName, message.color);
+        log(`[Supervisor] Project created: "${project.name}" (${project.id})`);
+        return done(`Project "${project.name}" created.`);
+      }
+      case 'UPDATE_PROJECT': {
+        const p = owned(String(message.projectId));
+        if (!p) { return reply(false, 'Project not found.'); }
+        projectStore.updateProject(p.id, { name: message.name, description: message.description, color: message.color, status: message.status });
+        return done(message.status && message.status !== p.status && !message.name ? `Project ${message.status === 'archived' ? 'archived' : 'restored'}.` : 'Project updated.');
+      }
+      case 'DELETE_PROJECT': {
+        const p = owned(String(message.projectId));
+        if (!p) { return reply(false, 'Project not found.'); }
+        const shifts = projectStore.getShifts(p.id);
+        if (projectStore.getSessionsForProject(p.id).some(s => !s.endedAt)) {
+          return reply(false, 'This project has a shift in progress. End it before deleting the project.');
+        }
+        const choice = await vscode.window.showWarningMessage(`Delete project "${p.name}"?`,
+          { modal: true, detail: `${shifts.length} shift(s) will be removed and assigned developers notified. Completed shift reports are kept.` }, 'Delete project');
+        if (choice !== 'Delete project') { return; }
+        for (const sh of shifts.filter(x => x.status === 'scheduled' && Date.parse(x.scheduledStart) > Date.now())) {
+          void notifications?.shiftCancelled(sh, by);
+        }
+        projectStore.deleteProject(p.id);
+        return done(`Project "${p.name}" deleted.`);
+      }
+
+      case 'CREATE_SHIFT': {
+        const p = owned(String(message.projectId));
+        if (!p || p.status !== 'active') { return reply(false, 'Choose an active project you supervise.'); }
+        const name = String(message.name ?? '').trim();
+        const occ: Array<{ start: string; end: string }> = Array.isArray(message.occurrences) ? message.occurrences.slice(0, 60) : [];
+        const valid = occ.filter(o => !isNaN(Date.parse(o.start)) && !isNaN(Date.parse(o.end)) && Date.parse(o.end) > Date.parse(o.start));
+        if (!name || valid.length === 0) { return reply(false, 'A shift needs a name, a date and a valid time range.'); }
+        const devIds = cleanIds(message.developerIds);
+        const devNames = await nameOf(devIds);
+        const seriesId = valid.length > 1 ? `series-${Date.now().toString(36)}` : undefined;
+        const created = valid.map(o => projectStore.createShift(p.id, name, String(message.description ?? ''), o.start, o.end,
+          devIds, devNames, session.githubUsername ?? session.username, seriesId)).filter((x): x is Shift => !!x);
+        if (devIds.length && created.length) {
+          if (created.length === 1) { void notifications?.shiftAssigned(created[0], devIds, by); }
+          else {
+            void notifications?.notify({
+              level: 'info', category: 'shift', section: 'shift', createdBy: by,
+              title: `New recurring shift: ${name}`,
+              message: `${by} assigned you to ${created.length} "${name}" shifts (${p.name}), first on ${new Date(created[0].scheduledStart).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}.`,
+              recipientIds: devIds, recipientRoles: [],
+            });
+          }
+        }
+        log(`[Supervisor] ${created.length} shift(s) "${name}" created in ${p.name}`);
+        return done(created.length === 1 ? `Shift "${name}" scheduled${devIds.length ? ` — ${devIds.length} developer(s) notified` : ''}.` : `${created.length} shifts scheduled.`);
+      }
+      case 'UPDATE_SHIFT':
+      case 'UPDATE_SHIFT_ASSIGNMENT': {
+        const sh = shiftOwned(String(message.shiftId));
+        if (!sh) { return reply(false, 'Shift not found.'); }
+        if (sh.status === 'completed') { return reply(false, 'Completed shifts cannot be changed.'); }
+        const before = { start: sh.scheduledStart, end: sh.scheduledEnd, devs: [...sh.assignedDeveloperIds] };
+        if (message.command === 'UPDATE_SHIFT') {
+          if (message.scheduledStart && message.scheduledEnd && Date.parse(message.scheduledEnd) <= Date.parse(message.scheduledStart)) {
+            return reply(false, 'The end time must be after the start time.');
+          }
+          projectStore.updateShift(sh.id, { name: message.name, description: message.description, scheduledStart: message.scheduledStart, scheduledEnd: message.scheduledEnd });
+        }
+        if (Array.isArray(message.developerIds)) {
+          const ids = cleanIds(message.developerIds);
+          projectStore.updateShiftAssignments(sh.id, ids, await nameOf(ids));
+        }
+        const after = projectStore.getShift(sh.id)!;
+        const added = after.assignedDeveloperIds.filter(d => !before.devs.includes(d));
+        const removed = before.devs.filter(d => !after.assignedDeveloperIds.includes(d));
+        if (added.length) { void notifications?.shiftAssigned(after, added, by); }
+        if (removed.length) { void notifications?.shiftUnassigned(after, removed, by); }
+        if (before.start !== after.scheduledStart || before.end !== after.scheduledEnd) {
+          const stay = after.assignedDeveloperIds.filter(d => before.devs.includes(d));
+          if (stay.length) { void notifications?.notify({ level: 'warning', category: 'shift', section: 'shift', createdBy: by,
+            title: `Shift rescheduled: ${after.name}`,
+            message: `"${after.name}" (${after.projectName}) moved to ${new Date(after.scheduledStart).toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}.`,
+            recipientIds: stay, recipientRoles: [] }); }
+        }
+        return done('Shift updated.');
+      }
+      case 'DELETE_SHIFT': {
+        const sh = shiftOwned(String(message.shiftId));
+        if (!sh) { return reply(false, 'Shift not found.'); }
+        if (projectStore.getSessionsForShift(sh.id).some(s => !s.endedAt)) { return reply(false, 'This shift is in progress and cannot be cancelled.'); }
+        const choice = await vscode.window.showWarningMessage(`Cancel shift "${sh.name}"?`,
+          { modal: true, detail: `${new Date(sh.scheduledStart).toLocaleString()} · ${sh.assignedDeveloperIds.length} developer(s) will be notified.` }, 'Cancel shift');
+        if (choice !== 'Cancel shift') { return; }
+        if (Date.parse(sh.scheduledEnd) > Date.now()) { void notifications?.shiftCancelled(sh, by); }
+        projectStore.deleteShift(sh.id);
+        return done(`Shift "${sh.name}" cancelled.`);
+      }
+
+      case 'ANNOUNCE': {
+        const title = String(message.title ?? '').trim().slice(0, 120);
+        const text = String(message.message ?? '').trim().slice(0, 600);
+        if (!title || !text) { return reply(false, 'Add a title and a message.'); }
+        const level: NotificationLevel = ['info', 'warning', 'critical'].includes(message.level) ? message.level : 'info';
+        let recipientIds: string[] = [];
+        if (message.audience === 'dev') { recipientIds = [String(message.target)]; }
+        else if (message.audience === 'project') {
+          const p = owned(String(message.target));
+          if (!p) { return reply(false, 'Choose one of your projects.'); }
+          recipientIds = [...new Set(projectStore.getShifts(p.id).flatMap(sh => sh.assignedDeveloperIds))];
+          if (!recipientIds.length) { return reply(false, `No developers are assigned to shifts in "${p.name}" yet.`); }
+        } else {
+          const users = await NeonDatabaseService.getInstance().getAllUsers();
+          recipientIds = users.filter(u => u.role === 'developer').map(u => u.githubUsername || u.username);
+        }
+        await notifications?.notify({ level, category: 'announcement', title, message: `${text} — ${by}`, recipientIds, recipientRoles: [], createdBy: by });
+        return reply(true, `Announcement sent to ${recipientIds.length} developer${recipientIds.length === 1 ? '' : 's'}.`);
+      }
+      case 'SET_NOTIFICATION_PREFS': {
+        const cfg = vscode.workspace.getConfiguration('sentinel');
+        const mins = Number(message.reminderMinutes);
+        if ([0, 5, 10, 15, 30, 60].includes(mins)) { await cfg.update('notifications.shiftReminderMinutes', mins, vscode.ConfigurationTarget.Global); }
+        if (['all', 'important', 'off'].includes(message.popups)) { await cfg.update('notifications.popups', message.popups, vscode.ConfigurationTarget.Global); }
+        return reply(true, 'Alert preferences saved.');
+      }
+      case 'REPORT_EXPORT': {
+        const fmt = ['csv', 'json', 'html'].includes(message.format) ? message.format as string : 'json';
+        const name = String(message.filename ?? `sentinel-report.${fmt}`).replace(/[^\w.-]+/g, '-');
+        const target = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? require('os').homedir(), name)),
+          filters: fmt === 'csv' ? { CSV: ['csv'] } : fmt === 'html' ? { HTML: ['html'] } : { JSON: ['json'] },
+          saveLabel: 'Export report',
+        });
+        if (!target) { return; }
+        await vscode.workspace.fs.writeFile(target, Buffer.from(String(message.content ?? ''), 'utf8'));
+        reply(true, `Report saved to ${path.basename(target.fsPath)}.`);
+        if (fmt === 'html') {
+          const open = await vscode.window.showInformationMessage(`Report saved to ${path.basename(target.fsPath)}.`, 'Open in browser');
+          if (open) { void vscode.env.openExternal(target); }
+        }
+        return;
+      }
+    }
+  } catch (err: any) {
+    log(`[Supervisor] ${message.command} failed: ${err?.message ?? err}`);
+    reply(false, `Something went wrong: ${err?.message ?? err}`);
+  }
+}
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+
+/** Feed the `sentinel.theme` setting and the active VS Code theme kind into the webview theme module. */
+function syncThemeFromVsCode(): void {
+  const kind = vscode.window.activeColorTheme.kind;
+  setVsCodeThemeKind(
+    kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? 'light' : 'dark'
+  );
+  setThemePreference(vscode.workspace.getConfiguration('sentinel').get<ThemePreference>('theme', 'auto'));
+}
+
+// ─── Component 2 API server ───────────────────────────────────────────────────
+
+function apiServerOptions(): SentinelApiServerOptions & { enabled: boolean } {
+  const config = vscode.workspace.getConfiguration('sentinel');
+  return {
+    enabled: config.get<boolean>('api.enabled', true),
+    port: config.get<number>('api.port', 7420),
+    apiKey: config.get<string>('api.key', '') || undefined,
+    log,
+  };
+}
+
+function startApiServer(): void {
+  const opts = apiServerOptions();
+  if (!opts.enabled) {
+    apiServerError = 'Disabled in settings (sentinel.api.enabled)';
+    return;
+  }
+  apiServer = new SentinelApiServer({
+    getLiveFindings: () => [...findingsCache.values()].flat(),
+    getRecentEvents: (since, limit) => eventClient.getRecentEvents(since, limit),
+    getCurrentDeveloperId: resolveDeveloperId,
+    getLearningProfile: devId => learningStore.getProfile(devId),
+    getShifts: devId => ({
+      assigned: projectStore.getShiftsForDeveloper(devId),
+      active: projectStore.getActiveSession(devId),
+      sessions: projectStore.getSessionsForDeveloper(devId),
+    }),
+    getSessionId: () => eventClient.getSessionId(),
+    getExtensionVersion: () => String(extensionContext.extension.packageJSON?.version ?? '0.0.0'),
+  }, opts);
+  apiServer.start().then(() => {
+    apiServerError = null;
+  }).catch((err: any) => {
+    apiServerError = err?.code === 'EADDRINUSE'
+      ? `Port ${opts.port} is already in use — change sentinel.api.port`
+      : String(err?.message ?? err);
+    log(`⚠️ Sentinel API failed to start: ${apiServerError}`);
+  }).finally(() => { void refreshDashboard(); });
+}
+
+async function restartApiServer(): Promise<void> {
+  await apiServer?.stop();
+  apiServer = undefined;
+  startApiServer();
 }
 
 /**
@@ -662,8 +1231,8 @@ async function refreshDashboard(): Promise<void> {
   if (session.role === 'developer') {
     dashboardPanel.title = `Sentinel — ${session.displayName}`;
     const devId          = session.githubUsername ?? session.username;
-    const assignedShifts = projectStore.getShiftsForDeveloper(devId);
-    const activeSession  = projectStore.getActiveSession(devId);
+    const assignedShifts = projectStore.getShiftsForDeveloper([devId, session.username]);
+    const activeSession  = projectStore.getActiveSession(devId) ?? projectStore.getActiveSession(session.username);
     const recentSessions = projectStore.getSessionsForDeveloper(devId);
 
     // Fetch live statistics and vulnerability tracking records from Neon PostgreSQL
@@ -675,12 +1244,21 @@ async function refreshDashboard(): Promise<void> {
     try {
       [stats, dbRecords, activities] = await Promise.all([
         db.getVulnerabilityStats(devId),
-        db.getVulnerabilityRecords(devId, 'ALL', 100),
-        db.getRecentActivities(devId, 25),
+        db.getVulnerabilityRecords(devId, 'ALL', 500),
+        db.getRecentActivities(devId, 200),
       ]);
     } catch (e) {
       console.warn('[Sentinel] Error querying Neon DB for dashboard:', e);
     }
+
+    const insights = computeDeveloperInsights({
+      developerId: devId,
+      liveFindings: allFindings,
+      records: dbRecords,
+      learningProfile: learningStore.getProfile(devId),
+      activities,
+      shiftSessions: recentSessions,
+    });
 
     dashboardPanel.webview.html = buildDeveloperDashboardHtml(
       summary,
@@ -696,40 +1274,87 @@ async function refreshDashboard(): Promise<void> {
       stats,
       dbRecords,
       dbStatus,
-      activities
+      activities.slice(0, 25),
+      insights,
+      {
+        running: apiServer?.isRunning ?? false,
+        url: apiServer?.isRunning ? apiServer.url : '',
+        error: apiServerError,
+      },
     );
   } else if (session.role === 'supervisor') {
     dashboardPanel.title = 'Sentinel — Supervisor Dashboard';
-    setDeveloperStats(await NeonDatabaseService.getInstance().getDeveloperStatsSummary());
-    const supId      = session.githubUsername ?? session.username;
-    const projects   = projectStore.getProjects(supId);
-    const shifts     = projectStore.getShifts();
-    const allUsers   = (await authManager.getAllUsers())
-      .filter(u => u.role === 'developer')
-      .map(u => ({
-        id: u.id, username: u.username, displayName: u.displayName,
-        githubUsername: (u as any).githubUsername,
-        githubAvatarUrl: (u as any).githubAvatarUrl,
-      }));
-    const allSessions = projectStore.getAllSessions();
-    dashboardPanel.webview.html = buildSupervisorDashboardHtml(
-      session, dataDir, cspSource, logoUri,
-      projects, shifts, allUsers, allSessions,
-    );
+    const [devStats, users, records] = await Promise.all([
+      db.getDeveloperStatsSummary(),
+      db.getAllUsers(),
+      db.getVulnerabilityRecords(undefined, 'ALL', 5000),
+    ]).catch(err => {
+      log(`[Supervisor] Failed to load dashboard data: ${err}`);
+      return [[], [], []] as [any[], any[], any[]];
+    });
+    setDeveloperStats(devStats);
+    const projects  = supervisedProjects(session);
+    const projIds   = new Set(projects.map(p => p.id));
+    const shifts    = projectStore.getShifts().filter(s => projIds.has(s.projectId));
+    const shiftIds  = new Set(shifts.map(s => s.id));
+    const sessions  = projectStore.getAllSessions().filter(s => shiftIds.has(s.shiftId));
+    const cfg = vscode.workspace.getConfiguration('sentinel');
+    dashboardPanel.webview.html = buildSupervisorDashboardHtml({
+      session, cspSource, logoUri, projects, shifts, sessions, devStats,
+      developers: users.filter(u => u.role === 'developer').map(u => ({
+        key: u.githubUsername || u.username, userId: u.id, username: u.username,
+        githubUsername: u.githubUsername ?? undefined, displayName: u.displayName,
+        githubAvatarUrl: u.githubAvatarUrl ?? undefined, lastLoginAt: u.lastLoginAt,
+      })),
+      records: records.map(r => ({
+        d: r.githubUsername || r.developerId, t: r.vulnerabilityType, s: r.severity,
+        st: r.status, at: r.detectedAt, fx: r.fixedAt,
+      })),
+      prefs: {
+        reminderMinutes: cfg.get<number>('notifications.shiftReminderMinutes', 15),
+        popups: cfg.get<string>('notifications.popups', 'all'),
+      },
+    });
   } else if (session.role === 'administrator') {
     dashboardPanel.title = 'Sentinel — Admin Dashboard';
     const config = vscode.workspace.getConfiguration('sentinel');
-    setDeveloperStats(await NeonDatabaseService.getInstance().getDeveloperStatsSummary());
-    const packageJson = require(path.join(extensionContext.extensionPath, 'package.json'));
-    dashboardPanel.webview.html = buildAdminDashboardHtml(
-      session,
-      await authManager.getAllUsers(),
-      dataDir,
-      cspSource,
-      logoUri,
-      packageJson.version ?? '0.1.0',
-      config.get<string>('backendUrl', 'http://localhost:3000'),
-    );
+    const [devStats, dbUsers, records, activities] = await Promise.all([
+      db.getDeveloperStatsSummary(),
+      db.getAllUsers(),
+      db.getVulnerabilityRecords(undefined, 'ALL', 5000),
+      db.getRecentActivities(undefined, 300),
+    ]).catch(err => {
+      log(`[Admin] Failed to load dashboard data: ${err}`);
+      return [[], [], [], []] as [any[], any[], any[], any[]];
+    });
+    setDeveloperStats(devStats);
+    const insights = computeDeveloperInsights({
+      developerId: 'ALL', liveFindings: [], records, learningProfile: null, activities, shiftSessions: [],
+    });
+    dashboardPanel.webview.html = buildAdminDashboardHtml({
+      session, cspSource, logoUri,
+      users: dbUsers.map(u => ({
+        id: u.id, username: u.username, githubUsername: u.githubUsername, role: u.role,
+        displayName: u.displayName, email: u.email, githubAvatarUrl: u.githubAvatarUrl,
+        createdAt: u.createdAt, lastLoginAt: u.lastLoginAt,
+      })),
+      devStats, records, activities, insights,
+      dbStatus: db.getStatus(),
+      system: {
+        extensionVersion: String(extensionContext.extension.packageJSON?.version ?? '0.0.0'),
+        backendUrl: config.get<string>('backendUrl', 'http://localhost:3000'),
+        ifeUrl: config.get<string>('ifeUrl', 'http://localhost:4000'),
+        apiUrl: apiServer?.isRunning ? apiServer.url : '',
+        apiRunning: apiServer?.isRunning ?? false,
+        apiError: apiServerError,
+        theme: config.get<string>('theme', 'auto'),
+        minConfidence: config.get<number>('minConfidence', 0.7),
+        analysisEnabled: config.get<boolean>('enabled', true),
+        aiEnabled: config.get<boolean>('enableAI', false),
+        rulesCount: analyzer.getRules().length,
+        debounceMs: config.get<number>('debounceMs', 400),
+      },
+    });
   }
 }
 
@@ -751,6 +1376,7 @@ function showDashboard(context: vscode.ExtensionContext): void {
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'resources')],
     },
   );
+  dashboardPanel.iconPath = logoFileUri();
 
   // Clear the reference when the user closes the panel
   dashboardPanel.onDidDispose(() => {
@@ -772,55 +1398,29 @@ function showDashboard(context: vscode.ExtensionContext): void {
 // ─── Webview Message Handler ──────────────────────────────────────────────────
 
 function handleWebviewMessage(message: { command: string; [key: string]: any }): void {
+  if (/^(ADMIN_|DB_)/.test(message.command) || message.command === 'CLEAR_DB') {
+    void handleAdminMessage(message);
+    return;
+  }
+  if (SUPERVISOR_COMMANDS.has(message.command)) {
+    void handleSupervisorMessage(message);
+    return;
+  }
+  if (message.command.startsWith('NOTIFICATION')) {
+    void handleNotificationMessage(message);
+    return;
+  }
   switch (message.command) {
-    case 'CREATE_PROJECT': {
-      const session = authManager.getSession();
-      if (!session) { break; }
-      const project = projectStore.createProject(
-        message.name as string,
-        message.description as string,
-        session.githubUsername ?? session.username,
-        session.displayName,
-      );
-      log(`📁 Project created: "${project.name}" (${project.id})`);
-      refreshDashboard();
-      break;
-    }
-
-    case 'CREATE_SHIFT': {
-      const shift = projectStore.createShift(
-        message.projectId as string,
-        message.name as string,
-        message.description as string,
-        message.scheduledStart as string,
-        message.scheduledEnd as string,
-        (message.developerIds as string[]) ?? [],
-        (message.developerNames as string[]) ?? [],
-        authManager.getSession()?.username ?? 'unknown',
-      );
-      if (shift) {
-        log(`📅 Shift created: "${shift.name}" in project ${shift.projectId}`);
-        refreshDashboard();
-      }
-      break;
-    }
-
-    case 'UPDATE_SHIFT_ASSIGNMENT': {
-      projectStore.updateShiftAssignments(
-        message.shiftId as string,
-        (message.developerIds as string[]) ?? [],
-        (message.developerNames as string[]) ?? [],
-      );
-      log(`👥 Updated assignments for shift ${message.shiftId as string}`);
-      refreshDashboard();
-      break;
-    }
-
     case 'START_SHIFT': {
       const authSession = authManager.getSession();
       if (!authSession) { break; }
       const shift = projectStore.getShift(message.shiftId as string);
       if (!shift) { break; }
+      const myIds = [authSession.githubUsername, authSession.username].filter(Boolean) as string[];
+      if (!shift.assignedDeveloperIds.some(id => myIds.includes(id))) {
+        vscode.window.showWarningMessage(`Sentinel: You are not assigned to "${shift.name}".`);
+        break;
+      }
 
       const developerId = authSession.githubUsername ?? authSession.username;
       const shiftSession = projectStore.startSession(
@@ -832,6 +1432,7 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
       );
 
       activeShiftSessionId = shiftSession.id;
+      void notifications?.shiftStarted(shift, projectStore.getProject(shift.projectId), authSession.displayName);
       log(`▶ Shift started: "${shift.name}" by ${authSession.displayName} (session: ${shiftSession.id})`);
       vscode.window.showInformationMessage(
         `🟢 Shift "${shift.name}" started! Sentinel is now tracking your vulnerabilities.`
@@ -842,9 +1443,16 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
 
     case 'END_SHIFT': {
       const sessionId = message.sessionId as string;
+      const owned = projectStore.getAllSessions().find(x => x.id === sessionId);
+      const me = authManager.getSession();
+      if (!owned || !me || ![me.githubUsername, me.username].includes(owned.developerId)) { break; }
       const endedSession = projectStore.endSession(sessionId);
 
       activeShiftSessionId = null;
+      if (endedSession) {
+        const sh = projectStore.getShift(endedSession.shiftId);
+        void notifications?.shiftEnded(endedSession, sh ? projectStore.getProject(sh.projectId) : undefined, sh);
+      }
 
       if (endedSession?.summary) {
         const sum = endedSession.summary;
@@ -933,28 +1541,6 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
       break;
     }
 
-    case 'ADMIN_ADD_USER': {
-      void authManager.addUser(
-        message.username as string,
-        message.password as string,
-        message.role as 'developer' | 'supervisor' | 'administrator',
-        message.displayName as string,
-        message.email as string,
-      ).then(result => {
-        log(`[Admin] Add user "${message.username as string}": ${result.message}`);
-        dashboardPanel?.webview.postMessage({ command: 'ADMIN_ADD_RESULT', ...result });
-      });
-      break;
-    }
-
-    case 'ADMIN_REMOVE_USER': {
-      void authManager.removeUser(message.userId as string).then(result => {
-        log(`[Admin] Remove user "${message.username as string}": ${result.message}`);
-        dashboardPanel?.webview.postMessage({ command: 'ADMIN_USER_RESULT', ...result });
-      });
-      break;
-    }
-
     case 'REFRESH_ADMIN': {
       void refreshDashboard();
       break;
@@ -1006,17 +1592,51 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
       break;
     }
 
-    case 'SCAN_WORKSPACE': {
-      void scanEntireWorkspace();
+    case 'RATE_FEEDBACK': {
+      const sess = authManager.getSession();
+      const devId = sess?.githubUsername ?? sess?.username ?? 'DEV_UNKNOWN';
+      const findingId = typeof message.findingId === 'string' && !message.findingId.startsWith('fb-')
+        ? message.findingId : undefined;
+      void NeonDatabaseService.getInstance().logActivity({
+        userId: sess?.userId,
+        username: sess?.username,
+        developerId: devId,
+        githubUsername: sess?.githubUsername,
+        actionType: 'FEEDBACK_RATED',
+        findingId,
+        vulnerabilityType: message.vulnerabilityType ?? undefined,
+        details: {
+          helpful: !!message.helpful,
+          comment: message.comment ?? null,
+          source: findingId ? 'warning' : message.findingId ? 'recommendation' : 'general',
+        },
+      }).then(() => {
+        if (message.comment) {
+          vscode.window.showInformationMessage('Sentinel: Thanks — your feedback was recorded.');
+          void refreshDashboard();
+        }
+      });
       break;
     }
 
-    case 'CLEAR_DB': {
-      NeonDatabaseService.getInstance().clearAllVulnerabilityRecords().then(() => {
-        vscode.window.showInformationMessage('Sentinel: All vulnerability records in database cleared.');
-        recordStore.dispose();
-        void refreshDashboard();
-      });
+    case 'SET_THEME': {
+      // The webview has already applied it; persist so every Sentinel view opens in this mode.
+      const pref = ['auto', 'light', 'dark'].includes(message.pref) ? message.pref as ThemePreference : 'auto';
+      setThemePreference(pref);
+      void vscode.workspace.getConfiguration('sentinel').update('theme', pref, vscode.ConfigurationTarget.Global);
+      break;
+    }
+
+    case 'OPEN_URL': {
+      const url = String(message.url ?? '');
+      if (/^https:\/\//.test(url)) {
+        void vscode.env.openExternal(vscode.Uri.parse(url));
+      }
+      break;
+    }
+
+    case 'SCAN_WORKSPACE': {
+      void scanEntireWorkspace();
       break;
     }
 
@@ -1107,7 +1727,20 @@ function severityIcon(severity: string): string {
 
 // ─── HTML Builders ────────────────────────────────────────────────────────────
 
-function buildExplainHtml(finding: SecurityFinding, _meta: any): string {
+/** File URI of the Sentinel brand logo (used for panel tab icons, hovers and webview headers). */
+function logoFileUri(): vscode.Uri {
+  return vscode.Uri.joinPath(extensionUri, 'resources', 'sentinel-logo.png');
+}
+
+/** Small "logo + Sentinel" brand strip shown at the top of the explain / fix panels. */
+function brandStripHtml(logoUri: string): string {
+  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;font-weight:700;font-size:0.95em;letter-spacing:-0.2px">
+    <img src="${logoUri}" alt="" width="24" height="24" style="object-fit:contain">Sentinel
+  </div>`;
+}
+
+
+function buildExplainHtml(finding: SecurityFinding, _meta: any, logoUri: string, cspSource: string): string {
   const ctx = generateContextualExplanation(finding);
   const conf = Math.round(finding.confidence * 100);
   const sevColor = finding.severity === 'CRITICAL' || finding.severity === 'HIGH' ? '#f14c4c' :
@@ -1117,6 +1750,7 @@ function buildExplainHtml(finding: SecurityFinding, _meta: any): string {
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src ${cspSource};">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1151,6 +1785,7 @@ function buildExplainHtml(finding: SecurityFinding, _meta: any): string {
   </style>
 </head>
 <body>
+  ${brandStripHtml(logoUri)}
   <div class="header">
     <div class="severity-dot"></div>
     <div>
@@ -1187,7 +1822,7 @@ function buildExplainHtml(finding: SecurityFinding, _meta: any): string {
   <div class="section">
     <div class="section-label">Fixed version of your code</div>
     <div class="pre-safe">
-      <div class="code-label safe">✅ Secure replacement</div>
+      <div class="code-label safe">Secure replacement</div>
       <pre>${escHtml(ctx.fixedCode)}</pre>
     </div>
     <div class="fix-note">💡 ${escHtml(ctx.fixExplanation)}</div>
@@ -1204,12 +1839,13 @@ function buildExplainHtml(finding: SecurityFinding, _meta: any): string {
 </html>`;
 }
 
-function buildFixHtml(finding: SecurityFinding, _meta: any): string {
+function buildFixHtml(finding: SecurityFinding, _meta: any, logoUri: string, cspSource: string): string {
   const ctx = generateContextualExplanation(finding);
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src ${cspSource};">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Fira+Code&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1226,14 +1862,15 @@ function buildFixHtml(finding: SecurityFinding, _meta: any): string {
   </style>
 </head>
 <body>
-  <h1>✅ Secure Fix &mdash; ${finding.type.replace(/_/g, ' ')}</h1>
+  ${brandStripHtml(logoUri)}
+  <h1>Secure Fix &mdash; ${finding.type.replace(/_/g, ' ')}</h1>
   <div class="subtitle">Line ${finding.lineNumber} in ${finding.fileName.split('/').pop()}</div>
   <div class="pre-danger">
-    <div class="code-label danger">❌ Your vulnerable code</div>
+    <div class="code-label danger">Your vulnerable code</div>
     <pre>${escHtml(ctx.vulnerableCode)}</pre>
   </div>
   <div class="pre-safe" style="margin-top:16px">
-    <div class="code-label safe">✅ Fixed version</div>
+    <div class="code-label safe">Fixed version</div>
     <pre>${escHtml(ctx.fixedCode)}</pre>
   </div>
   <div class="note">💡 <strong>Remediation:</strong> ${escHtml(ctx.fixExplanation)}<br><br>✍️ <em>Edit your code in the editor to apply this fix. Sentinel monitors keystrokes in real time and automatically records this vulnerability as FIXED once cleared!</em></div>

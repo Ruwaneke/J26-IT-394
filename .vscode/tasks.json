@@ -6,7 +6,7 @@
       "type": "shell",
       "command": "npm run compile",
       "options": {
-        "cwd": "${workspaceFolder}/sentinel"
+        "cwd": "${workspaceFolder}/component-1-sentinel"
       },
       "group": {
         "kind": "build",

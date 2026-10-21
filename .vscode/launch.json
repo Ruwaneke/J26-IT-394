@@ -6,10 +6,10 @@
       "type": "extensionHost",
       "request": "launch",
       "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/sentinel"
+        "--extensionDevelopmentPath=${workspaceFolder}/component-1-sentinel"
       ],
       "outFiles": [
-        "${workspaceFolder}/sentinel/out/**/*.js"
+        "${workspaceFolder}/component-1-sentinel/out/**/*.js"
       ],
       "preLaunchTask": "compile-sentinel"
     }

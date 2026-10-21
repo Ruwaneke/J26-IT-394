@@ -22,6 +22,9 @@ export interface Project {
   supervisorName: string;
   createdAt: string;
   status: ProjectStatus;
+  /** Accent colour used on cards and calendar chips (hex) */
+  color?: string;
+  updatedAt?: string;
 }
 
 export interface Shift {
@@ -37,6 +40,9 @@ export interface Shift {
   status: ShiftStatus;
   createdAt: string;
   createdBy: string;        // supervisorId
+  /** Shared id for shifts created together by a repeat rule */
+  seriesId?: string;
+  updatedAt?: string;
 }
 
 export interface SessionFinding {
@@ -85,7 +91,16 @@ export interface ShiftSession {
 
 // ─── Project Store ─────────────────────────────────────────────────────────────
 
+/** Collision-free id even when many are created in the same millisecond (repeating shifts). */
+function newId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export const PROJECT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16'];
+
 export class ProjectStore {
+  /** Pending DB writes — hydrate() waits for these so a refresh never overwrites unsaved local changes. */
+  private pendingWrites: Set<Promise<void>> = new Set();
   // In-memory caches
   private projects: Project[]      = [];
   private shifts: Shift[]          = [];
@@ -102,15 +117,17 @@ export class ProjectStore {
     description: string,
     supervisorId: string,
     supervisorName: string,
+    color?: string,
   ): Project {
     const project: Project = {
-      id:             `proj-${Date.now()}`,
+      id:             newId('proj'),
       name:           name.trim(),
       description:    description.trim(),
       supervisorId,
       supervisorName,
       createdAt:      new Date().toISOString(),
       status:         'active',
+      color:          color && /^#[0-9a-f]{6}$/i.test(color) ? color : PROJECT_COLORS[this.projects.length % PROJECT_COLORS.length],
     };
     this.projects.push(project);
     this.flushProjects();
@@ -136,11 +153,31 @@ export class ProjectStore {
     return true;
   }
 
+  updateProject(projectId: string, changes: { name?: string; description?: string; status?: ProjectStatus; color?: string }): Project | null {
+    const p = this.projects.find(x => x.id === projectId);
+    if (!p) { return null; }
+    if (changes.name?.trim()) { p.name = changes.name.trim(); }
+    if (typeof changes.description === 'string') { p.description = changes.description.trim(); }
+    if (changes.status && ['active', 'completed', 'archived'].includes(changes.status)) { p.status = changes.status; }
+    if (changes.color && /^#[0-9a-f]{6}$/i.test(changes.color)) { p.color = changes.color; }
+    p.updatedAt = new Date().toISOString();
+    // Keep the denormalised project name on shifts in sync
+    let shiftsChanged = false;
+    for (const sh of this.shifts) {
+      if (sh.projectId === p.id && sh.projectName !== p.name) { sh.projectName = p.name; shiftsChanged = true; }
+    }
+    this.flushProjects();
+    if (shiftsChanged) { this.flushShifts(); }
+    return p;
+  }
+
   deleteProject(projectId: string): boolean {
     const idx = this.projects.findIndex(p => p.id === projectId);
     if (idx === -1) { return false; }
     this.projects.splice(idx, 1);
+    this.shifts = this.shifts.filter(s => s.projectId !== projectId);
     this.flushProjects();
+    this.flushShifts();
     return true;
   }
 
@@ -155,12 +192,13 @@ export class ProjectStore {
     assignedDeveloperIds: string[],
     assignedDeveloperNames: string[],
     createdBy: string,
+    seriesId?: string,
   ): Shift | null {
     const project = this.getProject(projectId);
     if (!project) { return null; }
 
     const shift: Shift = {
-      id:                    `shift-${Date.now()}`,
+      id:                    newId('shift'),
       projectId,
       projectName:           project.name,
       name:                  name.trim(),
@@ -172,6 +210,7 @@ export class ProjectStore {
       status:                'scheduled',
       createdAt:             new Date().toISOString(),
       createdBy,
+      ...(seriesId ? { seriesId } : {}),
     };
     this.shifts.push(shift);
     this.flushShifts();
@@ -185,9 +224,32 @@ export class ProjectStore {
     return [...this.shifts];
   }
 
-  /** Get all shifts assigned to a specific developer */
-  getShiftsForDeveloper(developerId: string): Shift[] {
-    return this.shifts.filter(s => s.assignedDeveloperIds.includes(developerId));
+  /**
+   * Get all shifts assigned to a developer. Accepts every identifier the developer may have
+   * been assigned under (GitHub username, local username) so neither form is missed.
+   */
+  getShiftsForDeveloper(developerId: string | string[]): Shift[] {
+    const ids = new Set((Array.isArray(developerId) ? developerId : [developerId]).filter(Boolean));
+    return this.shifts.filter(s => s.assignedDeveloperIds.some(id => ids.has(id)));
+  }
+
+  updateShift(
+    shiftId: string,
+    changes: { name?: string; description?: string; scheduledStart?: string; scheduledEnd?: string },
+  ): Shift | null {
+    const s = this.shifts.find(x => x.id === shiftId);
+    if (!s) { return null; }
+    if (changes.name?.trim()) { s.name = changes.name.trim(); }
+    if (typeof changes.description === 'string') { s.description = changes.description.trim(); }
+    if (changes.scheduledStart && !isNaN(Date.parse(changes.scheduledStart))) { s.scheduledStart = changes.scheduledStart; }
+    if (changes.scheduledEnd && !isNaN(Date.parse(changes.scheduledEnd))) { s.scheduledEnd = changes.scheduledEnd; }
+    s.updatedAt = new Date().toISOString();
+    this.flushShifts();
+    return s;
+  }
+
+  getSessionsForProject(projectId: string): ShiftSession[] {
+    return this.sessions.filter(s => s.projectId === projectId);
   }
 
   getShift(shiftId: string): Shift | undefined {
@@ -243,7 +305,7 @@ export class ProjectStore {
     }
 
     const session: ShiftSession = {
-      id:                   `sess-${Date.now()}`,
+      id:                   newId('sess'),
       shiftId:              shift.id,
       shiftName:            shift.name,
       projectId:            shift.projectId,
@@ -447,6 +509,9 @@ export class ProjectStore {
 
   /** Load projects, shifts and sessions from Neon PostgreSQL into the in-memory cache. */
   async hydrate(): Promise<void> {
+    if (this.pendingWrites.size > 0) {
+      await Promise.allSettled([...this.pendingWrites]);
+    }
     const db = NeonDatabaseService.getInstance();
     const [p, s, ss] = await Promise.all([
       db.loadCollection<Project[]>('projects'),
@@ -471,6 +536,8 @@ export class ProjectStore {
   }
 
   private write(collection: string, data: unknown): void {
-    void NeonDatabaseService.getInstance().saveDocument(collection, 'all', data);
+    const p = NeonDatabaseService.getInstance().saveDocument(collection, 'all', data);
+    this.pendingWrites.add(p);
+    void p.finally(() => this.pendingWrites.delete(p));
   }
 }

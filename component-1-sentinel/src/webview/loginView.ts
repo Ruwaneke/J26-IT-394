@@ -10,6 +10,7 @@
  */
 
 import { AuthSession } from '../auth/authManager.js';
+import { THEME_CSS, THEME_SCRIPT, themeHtmlAttrs, themeSwitchHtml } from './theme.js';
 
 function escHtml(s: string): string {
   return String(s)
@@ -39,19 +40,20 @@ export function buildLoginHtml(
     : '';
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" ${themeHtmlAttrs()}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src ${cspSource} https://avatars.githubusercontent.com https://github.com data: *; script-src 'unsafe-inline';">
 <title>Sentinel — Authentication Portal</title>
 <style>
+${THEME_CSS}
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --bg-primary: #090d16;
-  --bg-card: rgba(17, 24, 39, 0.88);
-  --border-card: rgba(255, 255, 255, 0.10);
+  --bg-primary: var(--bg-app);
+  --bg-card: rgba(var(--card-rgb),  0.88);
+  --border-card: rgba(var(--ink),  0.10);
   --accent-cyan: #06b6d4;
   --accent-blue: #3b82f6;
   --accent-emerald: #10b981;
@@ -67,7 +69,7 @@ body {
   justify-content: center;
   position: relative;
   overflow: hidden;
-  color: #e6edf3;
+  color: var(--text-1);
 }
 
 body::before {
@@ -89,7 +91,7 @@ body::before {
   border-radius: 22px;
   padding: 36px 36px 32px;
   backdrop-filter: blur(24px);
-  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(56, 189, 248, 0.12);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, calc(0.65 * var(--shade-k))), 0 0 0 1px rgba(56, 189, 248, 0.12);
   animation: fadeUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
@@ -98,13 +100,13 @@ body::before {
 .logo-wrap { display: inline-flex; align-items: center; justify-content: center; margin-bottom: 14px; }
 .logo-img { width: 52px; height: 52px; object-fit: contain; border-radius: 14px; filter: drop-shadow(0 0 20px rgba(56, 189, 248, 0.45)); }
 .logo-box { width: 52px; height: 52px; background: linear-gradient(135deg, #0ea5e9, #3b82f6); border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 26px; box-shadow: 0 0 24px rgba(56, 189, 248, 0.4); }
-.app-title { font-size: 1.6em; font-weight: 800; color: #fff; letter-spacing: -0.5px; margin-bottom: 4px; }
-.app-subtitle { font-size: 0.8em; color: #94a3b8; }
+.app-title { font-size: 1.6em; font-weight: 800; color: var(--text-strong); letter-spacing: -0.5px; margin-bottom: 4px; }
+.app-subtitle { font-size: 0.8em; color: var(--text-2); }
 
 /* ── Portal Switcher Tabs ── */
 .portal-tabs {
   display: flex;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, calc(0.35 * var(--shade-k)));
   border: 1px solid var(--border-card);
   border-radius: 12px;
   padding: 4px;
@@ -117,7 +119,7 @@ body::before {
   border-radius: 9px;
   border: none;
   background: none;
-  color: #94a3b8;
+  color: var(--text-2);
   font-size: 0.8em;
   font-weight: 600;
   cursor: pointer;
@@ -128,12 +130,12 @@ body::before {
   justify-content: center;
   gap: 6px;
 }
-.portal-tab-btn:hover { color: #fff; }
+.portal-tab-btn:hover { color: var(--text-strong); }
 .portal-tab-btn.active {
   background: rgba(56, 189, 248, 0.15);
-  color: #38bdf8;
+  color: var(--t-cyan);
   font-weight: 700;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, calc(0.3 * var(--shade-k)));
 }
 
 /* ── Window Views ── */
@@ -142,16 +144,16 @@ body::before {
 @keyframes tabFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 .portal-desc-box {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--ink),  0.03);
   border: 1px solid var(--border-card);
   border-radius: 12px;
   padding: 14px;
   margin-bottom: 20px;
   font-size: 0.78em;
-  color: #94a3b8;
+  color: var(--text-2);
   line-height: 1.5;
 }
-.portal-desc-title { font-weight: 700; color: #fff; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; font-size: 1.05em; }
+.portal-desc-title { font-weight: 700; color: var(--text-strong); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; font-size: 1.05em; }
 
 /* GitHub Button */
 .btn-github {
@@ -162,7 +164,7 @@ body::before {
   width: 100%;
   padding: 14px 20px;
   background: linear-gradient(135deg, #24292e, #2d333b);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(var(--ink),  0.22);
   border-radius: 12px;
   color: #fff;
   font-size: 0.98em;
@@ -170,7 +172,7 @@ body::before {
   font-family: inherit;
   cursor: pointer;
   transition: all 0.2s;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, calc(0.35 * var(--shade-k)));
   margin-bottom: 16px;
 }
 .btn-github:hover {
@@ -184,7 +186,7 @@ body::before {
 .features-list {
   list-style: none;
   font-size: 0.75em;
-  color: #94a3b8;
+  color: var(--text-2);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -196,21 +198,21 @@ body::before {
 
 /* Form */
 .form-group { margin-bottom: 14px; text-align: left; }
-label { display: block; font-size: 0.72em; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+label { display: block; font-size: 0.72em; font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 input {
   width: 100%;
-  background: rgba(13, 17, 23, 0.85);
+  background: rgba(var(--sidebar-rgb),  0.85);
   border: 1px solid var(--border-card);
   border-radius: 10px;
   padding: 11px 14px;
-  color: #e6edf3;
+  color: var(--text-1);
   font-size: 0.88em;
   font-family: inherit;
   outline: none;
   transition: all 0.2s;
 }
-input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15); }
-input::placeholder { color: #475569; }
+input:focus { border-color: var(--t-cyan); box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15); }
+input::placeholder { color: var(--text-3); }
 
 .btn-login {
   width: 100%; margin-top: 8px;
@@ -236,38 +238,39 @@ input::placeholder { color: #475569; }
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 0.8em;
-  color: #f87171;
+  color: var(--t-red);
   margin-bottom: 16px;
 }
 
 /* Quick Fill Buttons */
-.quick-fill-title { font-size: 0.68em; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; text-align: center; margin: 16px 0 8px; }
+.quick-fill-title { font-size: 0.68em; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; text-align: center; margin: 16px 0 8px; }
 .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .btn-quick {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--ink),  0.03);
   border: 1px solid var(--border-card);
   border-radius: 8px;
   padding: 8px 10px;
   cursor: pointer;
-  color: #94a3b8;
+  color: var(--text-2);
   font-family: inherit;
   transition: all 0.15s;
   text-align: left;
 }
-.btn-quick:hover { background: rgba(255, 255, 255, 0.07); color: #fff; border-color: rgba(56, 189, 248, 0.3); }
-.quick-role { font-size: 0.72em; font-weight: 700; color: #38bdf8; display: block; }
-.quick-creds { font-size: 0.64em; color: #64748b; font-family: monospace; display: block; margin-top: 2px; }
+.btn-quick:hover { background: rgba(var(--ink),  0.07); color: var(--text-strong); border-color: rgba(56, 189, 248, 0.3); }
+.quick-role { font-size: 0.72em; font-weight: 700; color: var(--t-cyan); display: block; }
+.quick-creds { font-size: 0.64em; color: var(--text-3); font-family: monospace; display: block; margin-top: 2px; }
 
 /* DB Status Footer */
 .portal-footer {
   text-align: center; margin-top: 24px;
-  font-size: 0.72em; color: #64748b;
+  font-size: 0.72em; color: var(--text-3);
   display: flex; align-items: center; justify-content: center; gap: 8px;
 }
 .db-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981; }
 </style>
 </head>
 <body>
+<div style="position:fixed;top:14px;right:16px;z-index:10">${themeSwitchHtml()}</div>
 <div class="glow-tl"></div>
 <div class="glow-br"></div>
 
@@ -356,7 +359,7 @@ input::placeholder { color: #475569; }
 </div>
 
 <script>
-const vscode = acquireVsCodeApi();
+const vscode = window._vscode = acquireVsCodeApi();
 
 function switchPortal(portal) {
   document.querySelectorAll('.portal-tab-btn').forEach(b => b.classList.remove('active'));
@@ -392,6 +395,7 @@ function quickFill(u, p) {
   document.getElementById('mgmtLoginForm').requestSubmit();
 }
 </script>
+<script>${THEME_SCRIPT}</script>
 </body>
 </html>`;
 }
@@ -403,17 +407,18 @@ export function buildHeaderBar(session: AuthSession, cspSource: string): string 
   const userDisplay = session.githubUsername ? `@${session.githubUsername}` : session.displayName;
 
   return `
-  <div style="background:rgba(15,23,42,0.9);border-bottom:1px solid rgba(255,255,255,0.08);padding:8px 24px;display:flex;align-items:center;justify-content:space-between;font-size:0.78em;color:#94a3b8;">
+  <div style="background:rgba(var(--nav-rgb), 0.9);border-bottom:1px solid rgba(var(--ink), 0.08);padding:8px 24px;display:flex;align-items:center;justify-content:space-between;font-size:0.78em;color:var(--text-2);">
     <div style="display:flex;align-items:center;gap:12px;">
-      <span style="font-weight:700;color:#fff;">Sentinel Research</span>
-      <span style="color:#64748b;">·</span>
+      <span style="font-weight:700;color:var(--text-strong);">Sentinel Research</span>
+      <span style="color:var(--text-3);">·</span>
       <span>Role: <strong style="color:${isDev ? '#38bdf8' : '#f59e0b'}">${roleIcon} ${roleName}</strong></span>
-      <span style="color:#64748b;">·</span>
-      <span>User: <strong style="color:#fff">${escHtml(userDisplay)}</strong></span>
+      <span style="color:var(--text-3);">·</span>
+      <span>User: <strong style="color:var(--text-strong)">${escHtml(userDisplay)}</strong></span>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
+      ${themeSwitchHtml()}
       <button onclick="window._vscode ? window._vscode.postMessage({command:'LOGOUT'}) : acquireVsCodeApi().postMessage({command:'LOGOUT'})"
-        style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:#f87171;border-radius:6px;padding:3px 10px;font-size:0.85em;cursor:pointer;font-family:inherit;font-weight:600;">
+        style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--t-red);border-radius:6px;padding:3px 10px;font-size:0.85em;cursor:pointer;font-family:inherit;font-weight:600;">
         Sign Out
       </button>
     </div>

@@ -66,7 +66,7 @@ export class DiagnosticManager {
 
     // Build the diagnostic message
     const confidencePct = Math.round(finding.confidence * 100);
-    const label = `🛡 Sentinel [${finding.type}]`;
+    const label = `Sentinel [${finding.type}]`;
     const message =
       `${label}\n` +
       `${finding.message}\n` +
@@ -160,7 +160,8 @@ export function isDiagnosticWithFinding(d: vscode.Diagnostic): d is DiagnosticWi
  * Provides rich hover explanations when the developer hovers over a red underline.
  */
 export class SentinelHoverProvider implements vscode.HoverProvider {
-  constructor(private diagnosticManager: DiagnosticManager) {}
+  /** @param logoUri file URI of resources/sentinel-logo.png, shown in the hover heading */
+  constructor(private diagnosticManager: DiagnosticManager, private logoUri?: vscode.Uri) {}
 
   provideHover(
     document: vscode.TextDocument,
@@ -195,7 +196,8 @@ export class SentinelHoverProvider implements vscode.HoverProvider {
 
       // Header
       const vulnName = meta?.title ?? finding.type.replace(/_/g, ' ');
-      md.appendMarkdown(`## 🛡️ Sentinel — ${this.severityIcon(finding.severity)} ${vulnName}\n\n`);
+      const logoMd = this.logoUri ? `![Sentinel](${this.logoUri.toString()}|width=20,height=20) ` : '';
+      md.appendMarkdown(`## ${logoMd}Sentinel — ${this.severityIcon(finding.severity)} ${vulnName}\n\n`);
 
       // Metadata pill line
       const owaspText = owaspCat ? `**OWASP:** \`${owaspCat.id} (${owaspCat.name})\` &nbsp;|&nbsp; ` : '';

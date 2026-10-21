@@ -17,6 +17,9 @@ export class SecurityEventClient {
   private sessionId: string;
   private queue: QueuedEvent[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Ring buffer of recent events, served to Component 2 by the Sentinel API server (pull model). */
+  private recentEvents: SecurityEvent[] = [];
+  private static readonly MAX_RECENT_EVENTS = 1000;
 
   constructor() {
     this.sessionId = this.generateSessionId();
@@ -47,6 +50,18 @@ export class SecurityEventClient {
     return this.sessionId;
   }
 
+  /**
+   * Recent events (newest last), optionally only those after `sinceIso`.
+   * Lets Component 2 poll incrementally even when the push endpoint is down.
+   */
+  getRecentEvents(sinceIso?: string, limit = 200): SecurityEvent[] {
+    const since = sinceIso ? Date.parse(sinceIso) : NaN;
+    const filtered = Number.isNaN(since)
+      ? this.recentEvents
+      : this.recentEvents.filter(e => Date.parse(e.timestamp) > since);
+    return filtered.slice(-limit);
+  }
+
   // ─── Private ─────────────────────────────────────────────────────────────────
 
   private buildEvent(finding: SecurityFinding, action: DeveloperAction): SecurityEvent {
@@ -66,6 +81,10 @@ export class SecurityEventClient {
   }
 
   private async enqueue(event: SecurityEvent): Promise<void> {
+    this.recentEvents.push(event);
+    if (this.recentEvents.length > SecurityEventClient.MAX_RECENT_EVENTS) {
+      this.recentEvents.splice(0, this.recentEvents.length - SecurityEventClient.MAX_RECENT_EVENTS);
+    }
     this.queue.push({ event, retries: 0 });
     this.scheduleFlush();
   }
