@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -14,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** End-to-end through the real policy.yaml. */
 @SpringBootTest
+@ActiveProfiles("test")
 @AutoConfigureMockMvc
 class FeedbackControllerTest {
 
@@ -78,6 +80,14 @@ class FeedbackControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"event\":{\"eventId\":\"e-1\",\"cwe\":\"CWE-89\",\"severity\":\"HIGH\"}}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void publishesOpenApiDocument() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/feedback/decide']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/skills/{devHash}']").exists());
     }
 
     private String decideBody(String devHash, String cwe, String severity, int repeats, int ignores,

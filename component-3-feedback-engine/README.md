@@ -57,5 +57,39 @@ Example request:
 }
 ```
 
-Skill state is held in memory for now. The older `scoring` package is kept as
-the counter-only baseline (V1) for the ablation study.
+API documentation is served at `http://localhost:8083/swagger-ui.html`
+(OpenAPI JSON at `/v3/api-docs`).
+
+## Persistence
+
+Skill state is stored in two tables, `dev_skill` (current mastery per developer
+and CWE) and `skill_event` (an audit trail of every update, with mastery
+before and after). The schema is managed by Flyway in
+`src/main/resources/db/migration`.
+
+- By default the service uses a file-based H2 database in `./data/`. It runs
+  in PostgreSQL mode, needs no setup and keeps data across restarts.
+- For PostgreSQL, run with `--spring.profiles.active=postgres` and set
+  `DB_URL`, `DB_USERNAME` and `DB_PASSWORD`.
+- Tests use an in-memory database (the `test` profile).
+
+## Evaluation
+
+`mvn test` also replays 48 escalation scenarios and writes two reports:
+
+- `target/scenario-report.md` compares V0 (generic), V1 (history counters
+  only) and V2 (counters plus skill model). It also lists where the engine
+  disagrees with the rubric and includes a +/-25% sensitivity check on the
+  mastery parameters.
+- `target/tuning-report.md` shows the grid search used to choose policy 1.1.0.
+  The search uses the 32 tuning scenarios only.
+
+The scenarios and their expected levels come from the rubric in
+`tools/generate_scenarios.py` (run `python tools/generate_scenarios.py` to
+regenerate them). The rubric is written independently of the engine. Keep it
+fixed when tuning, so the held-out accuracy stays an honest estimate.
+
+| Policy | Held-out V0 | Held-out V1 | Held-out V2 |
+|---|---|---|---|
+| 1.0.0 (plan starting values) | 9/16 | 10/16 | 10/16 |
+| 1.1.0 (tuned) | 10/16 | 11/16 | 13/16 (81%) |
