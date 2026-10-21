@@ -1,13 +1,11 @@
 package com.sentinel.feedback.skill;
 
 import com.sentinel.feedback.policy.TestPolicies;
+import com.sentinel.feedback.testutil.MutableClock;
 import org.junit.jupiter.api.Test;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -77,32 +75,5 @@ class SkillModelServiceTest {
 
         assertEquals(2, service.currentSkills("d-1").size());
         assertEquals(0.425, service.currentMastery("d-1", "CWE-79"), EPS);
-    }
-
-    static final class MutableClock extends Clock {
-        private Instant now;
-
-        MutableClock(Instant start) {
-            this.now = start;
-        }
-
-        void advance(Duration duration) {
-            now = now.plus(duration);
-        }
-
-        @Override
-        public ZoneId getZone() {
-            return ZoneOffset.UTC;
-        }
-
-        @Override
-        public Clock withZone(ZoneId zone) {
-            return this;
-        }
-
-        @Override
-        public Instant instant() {
-            return now;
-        }
     }
 }

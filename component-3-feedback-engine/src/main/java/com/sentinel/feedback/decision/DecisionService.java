@@ -63,6 +63,9 @@ public class DecisionService {
         if (history.repeats30d() > 0) {
             reasons.add(history.repeats30d() + " repeats in 30 days");
         }
+        if (history.reopened30d() > 0) {
+            reasons.add(history.reopened30d() + " reopened fixes in 30 days");
+        }
         if (history.ignored30d() > 0) {
             reasons.add(history.ignored30d() + " ignored warnings in 30 days");
         }
