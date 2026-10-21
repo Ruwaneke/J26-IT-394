@@ -61,22 +61,27 @@ public class DecisionService {
     private List<String> reasons(VulnerabilityType type, DeveloperHistory history, double mastery) {
         List<String> reasons = new ArrayList<>();
         if (history.repeats30d() > 0) {
-            reasons.add(history.repeats30d() + " repeats in 30 days");
+            reasons.add(count(history.repeats30d(), "repeat") + " in 30 days");
         }
         if (history.reopened30d() > 0) {
-            reasons.add(history.reopened30d() + " reopened fixes in 30 days");
+            reasons.add(count(history.reopened30d(), "reopened fix") + " in 30 days");
         }
         if (history.ignored30d() > 0) {
-            reasons.add(history.ignored30d() + " ignored warnings in 30 days");
+            reasons.add(count(history.ignored30d(), "ignored warning") + " in 30 days");
         }
         if (history.lastSimilarDaysAgo() != null
                 && history.lastSimilarDaysAgo() <= policy.recency().halfDays()) {
-            reasons.add("Similar issue " + history.lastSimilarDaysAgo() + " days ago");
+            reasons.add("Similar issue " + count(history.lastSimilarDaysAgo(), "day") + " ago");
         }
         if (reasons.isEmpty()) {
             reasons.add("No recent history for this issue");
         }
         reasons.add(String.format(Locale.ROOT, "Mastery for %s: %.2f", type.cweId(), mastery));
         return List.copyOf(reasons);
+    }
+
+    private static String count(int n, String noun) {
+        String plural = noun.endsWith("x") ? noun + "es" : noun + "s";
+        return n + " " + (n == 1 ? noun : plural);
     }
 }

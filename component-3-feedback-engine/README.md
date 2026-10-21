@@ -23,11 +23,18 @@ severity without crossing the `INFO` or `CRITICAL` boundaries.
 It also provides secure-coding recommendation templates for each supported
 vulnerability category, including practical guidance and secure examples.
 
-For a browser demonstration using mock data, start the service and open
-`http://localhost:8083/`. The page shows the original score, behaviour-based
-escalation, and SQL-injection recommendation. The raw JSON is available at
-`http://localhost:8083/api/demo`. The demo also shows the monitored file, the
-vulnerable code, the detected error, and a corrected secure version.
+## Browser demo
+
+Start the service and open `http://localhost:8083/`. The Adaptive Security
+Coach demo runs the same vulnerability for four preset developers (first time,
+repeats, persistent ignorer, mastered) and one custom developer. For each one
+it shows the feedback level, a stacked score breakdown against the level
+thresholds, the developer's mastery, the reasons and any rule adjustments.
+Add `?cwe=CWE-798` (or another CWE id) to the URL to open straight onto a
+vulnerability.
+
+The original mock-data prototype is still available at `/legacy-demo.html`
+(raw JSON at `/api/demo`).
 
 ## Adaptive decision API (Plan A)
 
@@ -40,6 +47,8 @@ score described in the Adaptive Security Coach plan:
 - `GET /api/v1/skills/{devHash}`: returns mastery per CWE, with time decay applied.
 - `POST /api/v1/skills/{devHash}/events`: records a `FIX`, `IGNORE`, `REPEAT`
   or `REOPEN` outcome.
+- `GET /api/v1/policy`: returns the active policy (weights, thresholds,
+  mastery parameters and overrides).
 
 All weights, level thresholds, mastery parameters and hard overrides are in
 `src/main/resources/policy.yaml`. To try different values without

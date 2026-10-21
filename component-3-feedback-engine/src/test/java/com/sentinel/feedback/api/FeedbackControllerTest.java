@@ -83,6 +83,15 @@ class FeedbackControllerTest {
     }
 
     @Test
+    void exposesActivePolicy() throws Exception {
+        mockMvc.perform(get("/api/v1/policy"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value("1.1.0"))
+                .andExpect(jsonPath("$.weights.severity").value(35.0))
+                .andExpect(jsonPath("$.levels.l2").value(25.0));
+    }
+
+    @Test
     void publishesOpenApiDocument() throws Exception {
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
