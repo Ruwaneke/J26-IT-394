@@ -201,7 +201,7 @@
         {id: 'D', name: 'Developer D · mastered', desc: 'Fixed this issue 5 times in a row, nothing ignored.',
             events: ['FIX', 'FIX', 'FIX', 'FIX', 'FIX'],
             history: {repeats30d: 0, ignored30d: 0, fixed30d: 2, reopened30d: 0, lastSimilarDaysAgo: 12}},
-        {id: 'E', name: 'Custom developer', desc: 'Set the 30-day history yourself (mastery starts at 0.5).',
+        {id: 'E', name: 'Custom developer · try your own', desc: 'Type any history, then press Run decision.',
             custom: true, events: []},
     ];
 
@@ -250,6 +250,8 @@
                     <label>Ignored (30d)<input type="number" min="0" max="20" value="1" id="c-ignored"></label>
                     <label>Reopened (30d)<input type="number" min="0" max="20" value="0" id="c-reopened"></label>
                     <label>Last similar (days)<input type="number" min="0" max="365" value="10" id="c-last" placeholder="none"></label>
+                    <label style="grid-column:1/-1">Past actions, oldest first
+                        <input type="text" id="c-actions" value="" placeholder="e.g. IGNORE REPEAT FIX"></label>
                 </div>` : ''}
                 <div class="result"><p class="placeholder">Run a decision to see this developer's result.</p></div>
             </article>`).join('');
@@ -266,7 +268,12 @@
 
     async function decideFor(dev, runId, cwe, severity) {
         const devHash = `demo-${dev.id}-${runId}`;
-        for (const eventType of dev.events) {
+        const events = dev.custom
+            ? $('#c-actions').value.toUpperCase().split(/[\s,]+/).filter(Boolean)
+            : dev.events;
+        const unknown = events.filter((e) => !['FIX', 'IGNORE', 'REPEAT', 'REOPEN'].includes(e));
+        if (unknown.length) throw new Error(`Unknown past action: ${unknown.join(', ')} (use FIX, IGNORE, REPEAT or REOPEN)`);
+        for (const eventType of events) {
             await api(`/api/v1/skills/${devHash}/events`, {method: 'POST', body: JSON.stringify({cwe, eventType})});
         }
         const history = {devHash, ...(dev.custom ? customHistory() : dev.history)};
