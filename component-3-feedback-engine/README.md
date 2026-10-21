@@ -69,6 +69,40 @@ Example request:
 API documentation is served at `http://localhost:8083/swagger-ui.html`
 (OpenAPI JSON at `/v3/api-docs`).
 
+## Fatigue-aware delivery (Plan B)
+
+Each decision also gets a delivery channel. L1 is an inline hint, L2 a hint
+with details on hover, L3 a notification and side panel, and L4 a panel that
+needs a response. Alert-fatigue rules (`fatigue` in `policy.yaml`) can make
+the delivery quieter, but they never remove the warning:
+
+- **Interruption budget:** at most 3 interrupting notices per developer per
+  hour. Later ones become a hint with details on hover.
+- **Cooldown:** the same CWE in the same file does not pop up again within 10
+  minutes.
+- **De-escalation:** after 3 fixes in a row, each made within 10 minutes, the
+  next level drops by one. This never stacks with mastery relief and never
+  goes below the hard floors.
+- **Exempt findings:** hardcoded secrets (CWE-798) and CRITICAL findings are
+  never quietened.
+
+Endpoints:
+
+- `GET /api/v1/feedback/{id}/explain`: the stored decision, a plain-language
+  narrative and the developer's mastery trend. It powers `/why.html?id=...`.
+- `POST /api/v1/feedback/{id}/interaction`: the notice was `SHOWN`,
+  `EXPANDED` or `DISMISSED`. A dismissal within 2 seconds of being shown,
+  without expanding, counts as a quick dismissal.
+- `POST /api/v1/feedback/{id}/outcome`: the finding was `FIXED`, `IGNORED` or
+  `SNOOZED`. Fixes and ignores also update mastery.
+- `POST /api/v1/feedback/{id}/vote`: `HELPFUL`, `NOT_HELPFUL` or `TOO_MUCH`.
+- `GET /api/v1/analytics/fatigue?dev=...`: fatigue index (interruptions in the
+  last hour divided by the budget), quick dismissals, votes and hourly counts,
+  for Component 4.
+
+The demo page has a fatigue section. Open `/?run=overwhelmed` or
+`/?run=improving` to start one of its scenarios straight away.
+
 ## Persistence
 
 Skill state is stored in two tables, `dev_skill` (current mastery per developer

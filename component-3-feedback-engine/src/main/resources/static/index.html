@@ -120,6 +120,22 @@
         .status { margin-top: 16px; color: var(--muted); font-size: .85rem; min-height: 1.2em; }
         .status.error { color: var(--l4); }
 
+        .chip { display: inline-block; margin-top: 10px; padding: 4px 10px; border-radius: 999px; font-size: .78rem;
+                background: var(--panel-light); border: 1px solid var(--border); color: var(--text); }
+        .why { display: inline-block; margin-top: 14px; font-weight: 700; font-size: .9rem; }
+        .fatigue { margin-top: 18px; }
+        .fatigue h2 { margin-top: 8px; }
+        .fatigue .buttons { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+        .fatigue button.secondary { background: var(--panel-light); color: var(--text); border: 1px solid var(--border); }
+        .log { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+        .log li { display: grid; grid-template-columns: 2.2em 1fr auto; gap: 10px; align-items: start;
+                  padding: 10px 12px; background: var(--panel-light); border-radius: 10px; font-size: .88rem; color: var(--text); }
+        .log .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+        .log .note { display: block; color: var(--muted); font-size: .8rem; margin-top: 3px; }
+        .log .interrupt { color: var(--l3); font-weight: 700; white-space: nowrap; }
+        .log .quiet { color: var(--muted); white-space: nowrap; }
+        .summary { margin-top: 12px; font-size: .9rem; color: var(--text); }
+        @media (max-width: 700px) { .log li { grid-template-columns: 2em 1fr; } .log li > span:last-child { grid-column: 2; } }
         #tip {
             position: fixed; pointer-events: none; z-index: 10; display: none;
             padding: 8px 10px; background: #0a101b; border: 1px solid var(--border);
@@ -161,6 +177,20 @@
     <div class="legend" id="legend"></div>
     <section class="devs" id="devs"></section>
     <div class="status" id="status" role="status"></div>
+
+    <section class="card fatigue" aria-labelledby="fatigue-title">
+        <div class="tag">Alert-fatigue control · Plan B</div>
+        <h2 id="fatigue-title">Speak up only when it helps</h2>
+        <p>At most <span id="budget">3</span> interrupting popups per hour, no repeat popup for the same issue in the same
+            file within the cooldown, quieter feedback after quick fixes, and hardcoded secrets or critical findings are never
+            quietened. Fatigue changes how a warning is delivered, never whether it is shown.</p>
+        <div class="buttons">
+            <button id="run-overwhelmed" type="button">Overwhelmed developer: 6 findings in a row</button>
+            <button id="run-improving" type="button" class="secondary">Improving developer: 3 quick fixes</button>
+        </div>
+        <ol class="log" id="fatigue-log"></ol>
+        <div class="summary" id="fatigue-summary"></div>
+    </section>
 
     <section class="card template" id="template" hidden></section>
 </main>
@@ -308,6 +338,7 @@
             : '';
         $(`#dev-${dev.id} .result`).innerHTML = `
             <div class="level l${decision.level}">L${decision.level} · ${esc(decision.levelName)}</div>
+            <span class="chip">Shown as: ${esc(channelLabel(decision.channel))}</span>
             <div class="score">${fmt(decision.score)} <small>/ 100</small></div>
             ${scoreBar(decision)}
             <table class="factors">${factorRows}</table>
@@ -315,7 +346,8 @@
             <div class="mastery"><div class="meter"><div style="width:${decision.mastery * 100}%"></div></div>${fmt(decision.mastery)}</div>
             <h3>Why this level</h3>
             <ul>${decision.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
-            ${adjustments}`;
+            ${adjustments}
+            <a class="why" href="/why.html?id=${encodeURIComponent(decision.decisionId)}" target="_blank" rel="noopener">Why this level? →</a>`;
     }
 
     function renderTemplate(decision) {
@@ -354,6 +386,88 @@
         }
     }
 
+    const CHANNELS = {
+        INLINE: 'inline hint', INLINE_HOVER: 'hint with details on hover',
+        TOAST_PANEL: 'notification + side panel', PANEL_ACK: 'panel that needs a response',
+    };
+    const channelLabel = (channel) => CHANNELS[channel] || channel;
+    const INTERRUPTIVE = ['TOAST_PANEL', 'PANEL_ACK'];
+
+    function logLine(n, text, decision, extra = '') {
+        const interrupt = INTERRUPTIVE.includes(decision.channel);
+        const notes = [...decision.adjustments, ...decision.deliveryNotes]
+            .map((note) => `<span class="note">${esc(note)}</span>`).join('');
+        return `<li><span class="n">#${n}</span>
+            <span>${esc(text)} → <b>L${decision.level} ${esc(decision.levelName)}</b> ${esc(extra)}${notes}
+                <a class="note" href="/why.html?id=${encodeURIComponent(decision.decisionId)}" target="_blank" rel="noopener">Why this level? →</a></span>
+            <span class="${interrupt ? 'interrupt' : 'quiet'}">${interrupt ? '🔔 ' : '💬 '}${esc(channelLabel(decision.channel))}</span></li>`;
+    }
+
+    async function decideOne(devHash, cwe, file, history, runId, n) {
+        return api('/api/v1/feedback/decide', {
+            method: 'POST',
+            body: JSON.stringify({
+                event: {eventId: `fatigue-${runId}-${n}`, cwe, severity: 'HIGH', language: 'java', file},
+                history: {devHash, fixed30d: 0, reopened30d: 0, ...history},
+            }),
+        });
+    }
+
+    async function runFatigue(steps) {
+        document.querySelectorAll('.fatigue button').forEach((b) => b.disabled = true);
+        $('#fatigue-log').innerHTML = '';
+        $('#fatigue-summary').textContent = '';
+        try {
+            await steps();
+        } catch (error) {
+            $('#fatigue-summary').innerHTML = `<span style="color:var(--l4)">${esc(error.message)}</span>`;
+        } finally {
+            document.querySelectorAll('.fatigue button').forEach((b) => b.disabled = false);
+        }
+    }
+
+    // Six HIGH findings for a developer with a poor record: budget, then cooldown, then an exempt secret.
+    $('#run-overwhelmed').addEventListener('click', () => runFatigue(async () => {
+        const runId = Date.now().toString(36);
+        const dev = `demo-overwhelmed-${runId}`;
+        const history = {repeats30d: 3, ignored30d: 2, lastSimilarDaysAgo: 1};
+        const steps = [
+            ['CWE-89', 'UserController.java', 'SQL injection in UserController.java'],
+            ['CWE-89', 'OrderService.java', 'SQL injection in OrderService.java'],
+            ['CWE-89', 'ReportDao.java', 'SQL injection in ReportDao.java'],
+            ['CWE-89', 'SearchApi.java', 'SQL injection in SearchApi.java'],
+            ['CWE-89', 'UserController.java', 'SQL injection in UserController.java again'],
+            ['CWE-798', 'Config.java', 'Hardcoded secret in Config.java'],
+        ];
+        for (let i = 0; i < steps.length; i++) {
+            const [cwe, file, text] = steps[i];
+            const decision = await decideOne(dev, cwe, file, history, runId, i + 1);
+            $('#fatigue-log').insertAdjacentHTML('beforeend', logLine(i + 1, text, decision));
+        }
+        const f = await api(`/api/v1/analytics/fatigue?dev=${encodeURIComponent(dev)}`);
+        $('#fatigue-summary').innerHTML = `Fatigue index F = ${f.interruptionsLastHour} interruptions ÷ budget ${f.budgetPerHour}
+            = <b>${fmt(f.fatigueIndex)}</b>. Without these controls the same developer would have had 6 popups in a row.`;
+    }));
+
+    // A developer who once ignored a warning, then fixes three in a row within minutes.
+    $('#run-improving').addEventListener('click', () => runFatigue(async () => {
+        const runId = Date.now().toString(36);
+        const dev = `demo-improving-${runId}`;
+        const history = {repeats30d: 3, ignored30d: 1, lastSimilarDaysAgo: 1};
+        for (let i = 1; i <= 4; i++) {
+            const decision = await decideOne(dev, 'CWE-89', `Module${i}.java`, history, runId, i);
+            let extra = '';
+            if (i < 4) {
+                const outcome = await api(`/api/v1/feedback/${encodeURIComponent(decision.decisionId)}/outcome`,
+                    {method: 'POST', body: JSON.stringify({outcome: 'FIXED'})});
+                extra = `· fixed in ${outcome.timeToOutcomeSec}s (mastery now ${fmt(outcome.masteryAfter)})`;
+            }
+            $('#fatigue-log').insertAdjacentHTML('beforeend',
+                logLine(i, `SQL injection in Module${i}.java`, decision, extra));
+        }
+        $('#fatigue-summary').textContent = 'After three quick fixes in a row, the coach steps back one level for the next finding.';
+    }));
+
     // Hover tooltip for bar segments
     const tip = $('#tip');
     document.addEventListener('mousemove', (e) => {
@@ -371,6 +485,10 @@
     api('/api/v1/policy')
         .then((p) => {
             policy = p;
+            $('#budget').textContent = String(p.fatigue.interruptsPerHour);
+            // ?run=overwhelmed or ?run=improving starts a fatigue demo straight away
+            const autoRun = new URLSearchParams(location.search).get('run');
+            if (autoRun === 'overwhelmed' || autoRun === 'improving') $(`#run-${autoRun}`).click();
             $('#policy').innerHTML = `Policy <b>v${esc(p.version)}</b> · levels at ${fmt(p.levels.l2)} / ${fmt(p.levels.l3)} / ${fmt(p.levels.l4)}`;
             run();
         })

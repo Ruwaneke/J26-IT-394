@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Why This Level</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --background: #0b1220;
+            --panel: #141f33;
+            --panel-light: #1c2b44;
+            --text: #e8eef8;
+            --muted: #9badc7;
+            --accent: #5eead4;
+            --border: #2b3c59;
+            --code-bg: #0a101b;
+            --f-severity: #3987e5;
+            --f-repeat: #d95926;
+            --f-ignore: #199e70;
+            --f-weakness: #c98500;
+            --f-recency: #d55181;
+            --l1: #86efac; --l2: #5eead4; --l3: #fbbf24; --l4: #fb7185;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; font-family: Segoe UI, Arial, sans-serif; color: var(--text);
+            background: radial-gradient(circle at top right, #203457, var(--background) 55%);
+        }
+        main { max-width: 760px; margin: 0 auto; padding: 36px 20px 56px; }
+        a { color: var(--accent); }
+        h1 { margin: 6px 0 4px; font-size: 1.9rem; }
+        h3 { margin: 22px 0 8px; font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+        p { color: var(--muted); line-height: 1.6; margin: 0; }
+        .tag { color: var(--accent); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: .8rem; }
+        .card { padding: 22px; margin-top: 16px; background: rgba(20, 31, 51, .92); border: 1px solid var(--border); border-radius: 16px; }
+        .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        .level { padding: 6px 12px; border-radius: 999px; font-weight: 700; color: #08111f; }
+        .level.l1 { background: var(--l1); } .level.l2 { background: var(--l2); }
+        .level.l3 { background: var(--l3); } .level.l4 { background: var(--l4); }
+        .chip { padding: 6px 12px; border-radius: 999px; background: var(--panel-light); border: 1px solid var(--border); font-size: .85rem; }
+        .score { font-size: 1.6rem; font-weight: 700; }
+        .score small { font-size: .9rem; color: var(--muted); font-weight: 400; }
+        .narrative { color: var(--text); font-size: 1.02rem; }
+        .bar-wrap { position: relative; margin: 10px 0 26px; }
+        .bar { display: flex; height: 18px; background: var(--panel-light); border-radius: 4px; overflow: hidden; gap: 2px; }
+        .seg:first-child { border-radius: 4px 0 0 4px; }
+        .seg:hover { filter: brightness(1.25); }
+        .tick { position: absolute; top: -3px; height: 24px; border-left: 1px dashed var(--muted); }
+        .tick span { position: absolute; top: 26px; transform: translateX(-50%); font-size: .7rem; color: var(--muted); white-space: nowrap; }
+        table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+        td { padding: 4px 0; color: var(--muted); }
+        td.num { text-align: right; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+        ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.55; font-size: .92rem; }
+        .adjust { color: var(--l3); }
+        .delivery { color: var(--accent); }
+        svg text { fill: var(--muted); font-size: 11px; }
+        .votes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+        button { font: inherit; cursor: pointer; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--border);
+                 background: var(--panel-light); color: var(--text); }
+        button:hover { border-color: var(--accent); }
+        button:disabled { opacity: .55; cursor: default; }
+        .meta { font-size: .8rem; margin-top: 18px; }
+        .error { color: var(--l4); }
+        #tip { position: fixed; pointer-events: none; display: none; padding: 7px 10px; background: #0a101b;
+               border: 1px solid var(--border); border-radius: 8px; font-size: .8rem; }
+    </style>
+</head>
+<body>
+<main>
+    <a href="/">← Back to the demo</a>
+    <div id="content"><p style="margin-top:20px">Loading explanation…</p></div>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+    const FACTORS = [
+        {key: 'severity', label: 'Severity', color: 'var(--f-severity)'},
+        {key: 'repeat', label: 'Repeat pressure', color: 'var(--f-repeat)'},
+        {key: 'ignore', label: 'Ignore pressure', color: 'var(--f-ignore)'},
+        {key: 'weakness', label: 'Weakness (1 − mastery)', color: 'var(--f-weakness)'},
+        {key: 'recency', label: 'Recency', color: 'var(--f-recency)'},
+    ];
+    const CHANNELS = {
+        INLINE: 'inline hint', INLINE_HOVER: 'hint with details on hover',
+        TOAST_PANEL: 'notification + side panel', PANEL_ACK: 'panel that needs a response',
+    };
+    const $ = (s) => document.querySelector(s);
+    const esc = (v) => String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+    const fmt = (n) => Number(n).toFixed(2).replace(/\.?0+$/, '') || '0';
+    const id = new URLSearchParams(location.search).get('id');
+
+    async function api(path, options = {}) {
+        const r = await fetch(path, {...options, headers: {'Content-Type': 'application/json'}});
+        if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            throw new Error(body.detail || `HTTP ${r.status}`);
+        }
+        return r.json();
+    }
+
+    function sparkline(points, threshold) {
+        if (points.length === 0) {
+            return '<p>No recorded fixes or ignores yet, so mastery is at its starting value.</p>';
+        }
+        const w = 680, h = 120, padL = 30, padR = 10, padT = 10, padB = 20;
+        const all = [{mastery: 0.5}, ...points];
+        const x = (i) => padL + (all.length === 1 ? 0 : i * (w - padL - padR) / (all.length - 1));
+        const y = (m) => padT + (1 - m) * (h - padT - padB);
+        const path = all.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.mastery).toFixed(1)}`).join(' ');
+        const dots = all.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.mastery)}" r="5" fill="var(--accent)"
+            stroke="var(--panel)" stroke-width="2"
+            data-tip="${esc(i === 0 ? 'Start: 0.5 (unknown)' : `After event ${i}: ${fmt(p.mastery)}`)}"></circle>`).join('');
+        const guide = (m, label) => `<line x1="${padL}" x2="${w - padR}" y1="${y(m)}" y2="${y(m)}"
+            stroke="var(--muted)" stroke-dasharray="3 4" stroke-width="1" opacity=".6"></line>
+            <text x="${padL - 6}" y="${y(m) + 4}" text-anchor="end">${label}</text>`;
+        return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="Mastery over recorded events">
+            ${guide(1, '1')}${guide(threshold, fmt(threshold))}${guide(0.5, '0.5')}${guide(0, '0')}
+            <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"></path>${dots}</svg>
+            <p style="font-size:.8rem">Dashed lines: neutral 0.5 and the "mastered" threshold ${fmt(threshold)}.</p>`;
+    }
+
+    function render(e, policy) {
+        const d = e.decision;
+        const segments = FACTORS.filter((f) => d.breakdown[f.key] > 0).map((f) =>
+            `<div class="seg" style="width:${d.breakdown[f.key]}%;background:${f.color}"
+                data-tip="${esc(`${f.label}: ${fmt(d.breakdown[f.key])} of ${fmt(policy.weights[f.key])} points`)}"></div>`).join('');
+        const ticks = [['L2', policy.levels.l2], ['L3', policy.levels.l3], ['L4', policy.levels.l4]]
+            .map(([n, at]) => `<div class="tick" style="left:${at}%"><span>${n} ${fmt(at)}</span></div>`).join('');
+        const rows = FACTORS.map((f) => `<tr><td><span class="swatch" style="background:${f.color}"></span>${esc(f.label)}</td>
+            <td class="num">${fmt(d.breakdown[f.key])} / ${fmt(policy.weights[f.key])}</td></tr>`).join('');
+        const changes = [
+            ...d.adjustments.map((a) => `<li class="adjust">${esc(a)}</li>`),
+            ...d.deliveryNotes.map((a) => `<li class="delivery">${esc(a)}</li>`),
+        ];
+        $('#content').innerHTML = `
+            <div class="card">
+                <div class="tag">Why this level? · ${esc(d.cwe)}</div>
+                <h1>${esc(d.template.title)}</h1>
+                <div class="row" style="margin-top:10px">
+                    <span class="level l${d.level}">L${d.level} · ${esc(d.levelName)}</span>
+                    <span class="chip">Shown as: ${esc(CHANNELS[d.channel] || d.channel)}</span>
+                    <span class="chip">${esc(e.severity)} severity</span>
+                    ${e.file ? `<span class="chip">${esc(e.file)}</span>` : ''}
+                </div>
+                <h3>In plain words</h3>
+                <p class="narrative">${esc(d.narrative)}</p>
+            </div>
+            <div class="card">
+                <div class="score">${fmt(d.score)} <small>/ 100 priority score</small></div>
+                <div class="bar-wrap"><div class="bar">${segments}</div>${ticks}</div>
+                <table>${rows}</table>
+                <h3>Reasons</h3>
+                <ul>${d.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+                ${changes.length ? `<h3>Adjustments</h3><ul>${changes.join('')}</ul>` : ''}
+            </div>
+            <div class="card">
+                <h3 style="margin-top:0">Your mastery of ${esc(d.cwe)} (now ${fmt(d.mastery)})</h3>
+                ${sparkline(e.masteryHistory, policy.mastery.masteredThreshold)}
+            </div>
+            <div class="card">
+                <h3 style="margin-top:0">Was this feedback useful?</h3>
+                <div class="votes">
+                    <button data-vote="HELPFUL">👍 Helpful</button>
+                    <button data-vote="NOT_HELPFUL">👎 Not helpful</button>
+                    <button data-vote="TOO_MUCH">🔕 Too much</button>
+                </div>
+                <p id="vote-status" style="margin-top:10px;font-size:.85rem"></p>
+                <h3>How to fix it</h3>
+                <p>${esc(d.template.guidance)}</p>
+                <pre style="background:var(--code-bg);padding:14px;border-radius:10px;color:var(--accent);overflow-x:auto">${esc(d.template.secureExample)}</pre>
+                <p class="meta">Decision ${esc(d.decisionId)} · policy v${esc(d.policyVersion)} · ${esc(new Date(e.createdAt).toLocaleString())}</p>
+            </div>`;
+        document.querySelectorAll('[data-vote]').forEach((b) => b.addEventListener('click', async () => {
+            document.querySelectorAll('[data-vote]').forEach((x) => x.disabled = true);
+            try {
+                await api(`/api/v1/feedback/${encodeURIComponent(id)}/vote`, {method: 'POST', body: JSON.stringify({vote: b.dataset.vote})});
+                $('#vote-status').textContent = 'Thanks, your vote was recorded. It feeds the annoyance and usefulness analysis.';
+            } catch (err) {
+                $('#vote-status').textContent = err.message;
+            }
+        }));
+    }
+
+    const tip = $('#tip');
+    document.addEventListener('mousemove', (ev) => {
+        const t = ev.target.closest('[data-tip]');
+        if (!t) { tip.style.display = 'none'; return; }
+        tip.textContent = t.dataset.tip;
+        tip.style.display = 'block';
+        tip.style.left = `${Math.min(ev.clientX + 14, innerWidth - 240)}px`;
+        tip.style.top = `${ev.clientY + 14}px`;
+    });
+
+    if (!id) {
+        $('#content').innerHTML = '<p class="error" style="margin-top:20px">No decision id given. Open this page from the demo.</p>';
+    } else {
+        Promise.all([api(`/api/v1/feedback/${encodeURIComponent(id)}/explain`), api('/api/v1/policy')])
+            .then(([explanation, policy]) => {
+                render(explanation, policy);
+                // Opening the Why panel counts as expanding the notice.
+                api(`/api/v1/feedback/${encodeURIComponent(id)}/interaction`,
+                    {method: 'POST', body: JSON.stringify({type: 'EXPANDED'})}).catch(() => {});
+            })
+            .catch((err) => {
+                $('#content').innerHTML = `<p class="error" style="margin-top:20px">${esc(err.message)}</p>`;
+            });
+    }
+</script>
+</body>
+</html>
