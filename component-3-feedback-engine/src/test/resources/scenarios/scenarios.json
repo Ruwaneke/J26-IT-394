@@ -1,0 +1,1718 @@
+[
+  {
+    "id": "SQLI-01",
+    "set": "tuning",
+    "situation": "first-time",
+    "description": "First occurrence, no history",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 2,
+    "rationale": "HIGH base L2"
+  },
+  {
+    "id": "SQLI-02",
+    "set": "tuning",
+    "situation": "first-time-lower",
+    "description": "First occurrence of a less severe finding",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 2,
+    "rationale": "MEDIUM base L2"
+  },
+  {
+    "id": "SQLI-03",
+    "set": "heldout",
+    "situation": "first-time-higher",
+    "description": "First occurrence of a more severe finding",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "CRITICAL"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 2,
+    "rationale": "CRITICAL base L2"
+  },
+  {
+    "id": "SQLI-04",
+    "set": "tuning",
+    "situation": "one-earlier-fixed",
+    "description": "One earlier occurrence, fixed 6 days ago",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 6
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 6
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "HIGH base L2"
+  },
+  {
+    "id": "SQLI-05",
+    "set": "tuning",
+    "situation": "repeated-but-fixed",
+    "description": "Reintroduced 3 times this month, fixed each time",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 0,
+      "fixed30d": 4,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 3
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 24
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 16
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 16
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 8
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 8
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 3
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 3
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "SQLI-06",
+    "set": "heldout",
+    "situation": "repeated-ignored-twice",
+    "description": "Reintroduced 3 times, 2 warnings ignored",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 2,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 26
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 18
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 18
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "SQLI-07",
+    "set": "tuning",
+    "situation": "persistent-ignorer",
+    "description": "Reintroduced 3 times, 3 warnings ignored",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 3,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 27
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 19
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 19
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 4,
+    "rationale": "HIGH base L2; persistent repeat-and-ignore pattern +2"
+  },
+  {
+    "id": "SQLI-08",
+    "set": "tuning",
+    "situation": "mastered",
+    "description": "Five fixes over three months, nothing ignored",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 12
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 80
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 62
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 45
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 28
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 12
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "HIGH base L2; demonstrated mastery -1"
+  },
+  {
+    "id": "SQLI-09",
+    "set": "heldout",
+    "situation": "improving",
+    "description": "Ignored warnings two months ago, three fixes this month",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 3,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 50
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 40
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 25
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 15
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "HIGH base L2; demonstrated mastery -1"
+  },
+  {
+    "id": "SQLI-10",
+    "set": "tuning",
+    "situation": "fix-reopened",
+    "description": "Two fixes this month did not hold",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 2,
+      "lastSimilarDaysAgo": 4
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 14
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 14
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 4
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "SQLI-11",
+    "set": "tuning",
+    "situation": "old-history-only",
+    "description": "Ignored and repeated, but over two months ago",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 60
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 75
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 70
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 70
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "HIGH base L2"
+  },
+  {
+    "id": "SQLI-12",
+    "set": "heldout",
+    "situation": "mastered-recent-ignore",
+    "description": "Long fix record, one warning ignored 5 days ago",
+    "event": {
+      "cwe": "CWE-89",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 1,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 70
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 50
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 35
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "HIGH base L2"
+  },
+  {
+    "id": "XSS-01",
+    "set": "tuning",
+    "situation": "first-time",
+    "description": "First occurrence, no history",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 2,
+    "rationale": "MEDIUM base L2"
+  },
+  {
+    "id": "XSS-02",
+    "set": "heldout",
+    "situation": "first-time-lower",
+    "description": "First occurrence of a less severe finding",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1"
+  },
+  {
+    "id": "XSS-03",
+    "set": "tuning",
+    "situation": "first-time-higher",
+    "description": "First occurrence of a more severe finding",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 2,
+    "rationale": "HIGH base L2"
+  },
+  {
+    "id": "XSS-04",
+    "set": "tuning",
+    "situation": "one-earlier-fixed",
+    "description": "One earlier occurrence, fixed 6 days ago",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 6
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 6
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "MEDIUM base L2"
+  },
+  {
+    "id": "XSS-05",
+    "set": "heldout",
+    "situation": "repeated-but-fixed",
+    "description": "Reintroduced 3 times this month, fixed each time",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 0,
+      "fixed30d": 4,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 3
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 24
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 16
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 16
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 8
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 8
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 3
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 3
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "MEDIUM base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "XSS-06",
+    "set": "tuning",
+    "situation": "repeated-ignored-twice",
+    "description": "Reintroduced 3 times, 2 warnings ignored",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 2,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 26
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 18
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 18
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "MEDIUM base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "XSS-07",
+    "set": "tuning",
+    "situation": "persistent-ignorer",
+    "description": "Reintroduced 3 times, 3 warnings ignored",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 3,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 27
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 19
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 19
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 4,
+    "rationale": "MEDIUM base L2; persistent repeat-and-ignore pattern +2"
+  },
+  {
+    "id": "XSS-08",
+    "set": "heldout",
+    "situation": "mastered",
+    "description": "Five fixes over three months, nothing ignored",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 12
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 80
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 62
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 45
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 28
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 12
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "MEDIUM base L2; demonstrated mastery -1"
+  },
+  {
+    "id": "XSS-09",
+    "set": "tuning",
+    "situation": "improving",
+    "description": "Ignored warnings two months ago, three fixes this month",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 3,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 50
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 40
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 25
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 15
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "MEDIUM base L2; demonstrated mastery -1"
+  },
+  {
+    "id": "XSS-10",
+    "set": "tuning",
+    "situation": "fix-reopened",
+    "description": "Two fixes this month did not hold",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 2,
+      "lastSimilarDaysAgo": 4
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 14
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 14
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 4
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "MEDIUM base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "XSS-11",
+    "set": "heldout",
+    "situation": "old-history-only",
+    "description": "Ignored and repeated, but over two months ago",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 60
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 75
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 70
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 70
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "MEDIUM base L2"
+  },
+  {
+    "id": "XSS-12",
+    "set": "tuning",
+    "situation": "mastered-recent-ignore",
+    "description": "Long fix record, one warning ignored 5 days ago",
+    "event": {
+      "cwe": "CWE-79",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 1,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 70
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 50
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 35
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "MEDIUM base L2"
+  },
+  {
+    "id": "SECRET-01",
+    "set": "heldout",
+    "situation": "first-time",
+    "description": "First occurrence, no history",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-02",
+    "set": "tuning",
+    "situation": "first-time-lower",
+    "description": "First occurrence of a less severe finding",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 3,
+    "rationale": "MEDIUM base L2; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-03",
+    "set": "tuning",
+    "situation": "first-time-higher",
+    "description": "First occurrence of a more severe finding",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "CRITICAL"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 3,
+    "rationale": "CRITICAL base L2; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-04",
+    "set": "heldout",
+    "situation": "one-earlier-fixed",
+    "description": "One earlier occurrence, fixed 6 days ago",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 6
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 6
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-05",
+    "set": "tuning",
+    "situation": "repeated-but-fixed",
+    "description": "Reintroduced 3 times this month, fixed each time",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 0,
+      "fixed30d": 4,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 3
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 24
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 16
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 16
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 8
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 8
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 3
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 3
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "SECRET-06",
+    "set": "tuning",
+    "situation": "repeated-ignored-twice",
+    "description": "Reintroduced 3 times, 2 warnings ignored",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 2,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 26
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 18
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 18
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "SECRET-07",
+    "set": "heldout",
+    "situation": "persistent-ignorer",
+    "description": "Reintroduced 3 times, 3 warnings ignored",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 3,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 27
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 19
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 19
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 4,
+    "rationale": "HIGH base L2; persistent repeat-and-ignore pattern +2"
+  },
+  {
+    "id": "SECRET-08",
+    "set": "tuning",
+    "situation": "mastered",
+    "description": "Five fixes over three months, nothing ignored",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 12
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 80
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 62
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 45
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 28
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 12
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; demonstrated mastery -1; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-09",
+    "set": "tuning",
+    "situation": "improving",
+    "description": "Ignored warnings two months ago, three fixes this month",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 3,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 50
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 40
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 25
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 15
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; demonstrated mastery -1; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-10",
+    "set": "heldout",
+    "situation": "fix-reopened",
+    "description": "Two fixes this month did not hold",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 2,
+      "lastSimilarDaysAgo": 4
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 14
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 14
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 4
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "SECRET-11",
+    "set": "tuning",
+    "situation": "old-history-only",
+    "description": "Ignored and repeated, but over two months ago",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 60
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 75
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 70
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 70
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; hardcoded secret floor L3"
+  },
+  {
+    "id": "SECRET-12",
+    "set": "tuning",
+    "situation": "mastered-recent-ignore",
+    "description": "Long fix record, one warning ignored 5 days ago",
+    "event": {
+      "cwe": "CWE-798",
+      "severity": "HIGH"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 1,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 70
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 50
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 35
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "HIGH base L2; hardcoded secret floor L3"
+  },
+  {
+    "id": "VALID-01",
+    "set": "tuning",
+    "situation": "first-time",
+    "description": "First occurrence, no history",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1"
+  },
+  {
+    "id": "VALID-02",
+    "set": "tuning",
+    "situation": "first-time-lower",
+    "description": "First occurrence of a less severe finding",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "INFO"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 1,
+    "rationale": "INFO base L1"
+  },
+  {
+    "id": "VALID-03",
+    "set": "heldout",
+    "situation": "first-time-higher",
+    "description": "First occurrence of a more severe finding",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "MEDIUM"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": null
+    },
+    "skillEvents": [],
+    "expectedLevel": 2,
+    "rationale": "MEDIUM base L2"
+  },
+  {
+    "id": "VALID-04",
+    "set": "tuning",
+    "situation": "one-earlier-fixed",
+    "description": "One earlier occurrence, fixed 6 days ago",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 6
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 6
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1"
+  },
+  {
+    "id": "VALID-05",
+    "set": "tuning",
+    "situation": "repeated-but-fixed",
+    "description": "Reintroduced 3 times this month, fixed each time",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 0,
+      "fixed30d": 4,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 3
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 24
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 16
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 16
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 8
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 8
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 3
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 3
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "LOW base L1; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "VALID-06",
+    "set": "heldout",
+    "situation": "repeated-ignored-twice",
+    "description": "Reintroduced 3 times, 2 warnings ignored",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 2,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 26
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 18
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 18
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "LOW base L1; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "VALID-07",
+    "set": "tuning",
+    "situation": "persistent-ignorer",
+    "description": "Reintroduced 3 times, 3 warnings ignored",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 3,
+      "ignored30d": 3,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 2
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 27
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 19
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 19
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 9
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 9
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 2
+      }
+    ],
+    "expectedLevel": 3,
+    "rationale": "LOW base L1; persistent repeat-and-ignore pattern +2"
+  },
+  {
+    "id": "VALID-08",
+    "set": "tuning",
+    "situation": "mastered",
+    "description": "Five fixes over three months, nothing ignored",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 12
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 80
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 62
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 45
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 28
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 12
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1; demonstrated mastery -1"
+  },
+  {
+    "id": "VALID-09",
+    "set": "heldout",
+    "situation": "improving",
+    "description": "Ignored warnings two months ago, three fixes this month",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 3,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 50
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 40
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 25
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 15
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1; demonstrated mastery -1"
+  },
+  {
+    "id": "VALID-10",
+    "set": "tuning",
+    "situation": "fix-reopened",
+    "description": "Two fixes this month did not hold",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 2,
+      "reopened30d": 2,
+      "lastSimilarDaysAgo": 4
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 14
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 14
+      },
+      {
+        "type": "REOPEN",
+        "daysAgo": 4
+      }
+    ],
+    "expectedLevel": 2,
+    "rationale": "LOW base L1; concerning pattern (repeats, ignores or reopens) +1"
+  },
+  {
+    "id": "VALID-11",
+    "set": "tuning",
+    "situation": "old-history-only",
+    "description": "Ignored and repeated, but over two months ago",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 0,
+      "fixed30d": 0,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 60
+    },
+    "skillEvents": [
+      {
+        "type": "IGNORE",
+        "daysAgo": 75
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 70
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 70
+      },
+      {
+        "type": "REPEAT",
+        "daysAgo": 60
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 60
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1"
+  },
+  {
+    "id": "VALID-12",
+    "set": "heldout",
+    "situation": "mastered-recent-ignore",
+    "description": "Long fix record, one warning ignored 5 days ago",
+    "event": {
+      "cwe": "CWE-20",
+      "severity": "LOW"
+    },
+    "history": {
+      "repeats30d": 0,
+      "ignored30d": 1,
+      "fixed30d": 1,
+      "reopened30d": 0,
+      "lastSimilarDaysAgo": 5
+    },
+    "skillEvents": [
+      {
+        "type": "FIX",
+        "daysAgo": 70
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 50
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 35
+      },
+      {
+        "type": "FIX",
+        "daysAgo": 20
+      },
+      {
+        "type": "IGNORE",
+        "daysAgo": 5
+      }
+    ],
+    "expectedLevel": 1,
+    "rationale": "LOW base L1"
+  }
+]
