@@ -22,3 +22,9 @@ severity without crossing the `INFO` or `CRITICAL` boundaries.
 
 It also provides secure-coding recommendation templates for each supported
 vulnerability category, including practical guidance and secure examples.
+
+For a browser demonstration using mock data, start the service and open
+`http://localhost:8083/`. The page shows the original score, behaviour-based
+escalation, and SQL-injection recommendation. The raw JSON is available at
+`http://localhost:8083/api/demo`. The demo also shows the monitored file, the
+vulnerable code, the detected error, and a corrected secure version.
