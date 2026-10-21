@@ -1,0 +1,46 @@
+# Adaptive Security Coach decision policy.
+# All weights, thresholds and mastery parameters live here so they can be tuned
+# without recompiling. Override at runtime with:
+#   --spring.config.additional-location=file:./my-policy.yaml
+policy:
+  version: 1.0.0
+
+  # Priority score P = severity*S + repeat*Rn + ignore*In + weakness*(1 - M) + recency*Rec
+  weights:
+    severity: 35
+    repeat: 20
+    ignore: 20
+    weakness: 15
+    recency: 10
+
+  # Repeats/ignores in the last 30 days at which the pressure term saturates at 1.0
+  pressure-saturation: 3
+
+  # Recency term: 1.0 within full-days, 0.5 within half-days, otherwise 0
+  recency:
+    full-days: 7
+    half-days: 14
+
+  # Minimum score for each level; anything below l2 is L1
+  levels:
+    l2: 30
+    l3: 55
+    l4: 80
+
+  mastery:
+    initial: 0.5
+    fix-gain: 0.25
+    ignore-loss: 0.15
+    repeat-loss: 0.30
+    reopen-loss: 0.20
+    half-life-days: 30
+    mastered-threshold: 0.75
+
+  # Hard floors applied last, so no other rule can lower them
+  overrides:
+    - cwe: CWE-798          # hardcoded secrets
+      min-level: 3
+      reason: Hardcoded credentials are dangerous even on the first occurrence
+    - severity: CRITICAL
+      min-level: 2
+      reason: Critical findings always get at least guided feedback
