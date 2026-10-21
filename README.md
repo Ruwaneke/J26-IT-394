@@ -18,12 +18,10 @@ status is:
 |---|---|---|
 | Component 1 - Sentinel VS Code Extension | Detect vulnerabilities and provide real-time editor feedback | Initial implementation available |
 | Component 2 - Developer Behaviour Tracker | Receive security events and maintain behaviour history | Backend structure created; implementation is pending |
-| Component 3 - Intelligent Feedback Engine | Score severity, escalate feedback and generate personalised recommendations | Standalone Spring Boot setup verified on October 12, 2026 |
+| Component 3 - Intelligent Feedback Engine | Score severity, escalate feedback and generate personalised recommendations | Standalone Spring Boot setup verified |
 | Component 4 - Analytics Dashboard | Visualise behaviour and research outcomes | Frontend and backend structure created; implementation is pending |
 
-The current milestone focuses on completing at least 50% of Component 3 by
-October 20, 2026. Component 3 will remain a standalone prototype using mock
-Component 1 and Component 2 data until its core engine is working.
+
 
 ## System architecture
 
@@ -167,41 +165,11 @@ adaptive feedback. Its planned core capabilities are:
 6. Integrate the engine into one standalone service.
 7. Expose the service through a tested REST API.
 
-### Current implementation
-
-The October 12 setup includes:
-
-- Spring Boot 3.3.5 Maven project
-- Java 21 source compatibility
-- Spring Web and validation dependencies
-- Spring Boot application entry point
-- Port `8083` configuration
-- Initial Spring application context test
-- Detailed October 12-20 development schedule
-
-### Run Component 3
-
-From the Component 3 directory:
-
-```text
-cd component-3-feedback-engine
-mvn test
-mvn spring-boot:run
-```
-
-The service is configured to run at:
-
-```text
-http://localhost:8083
-```
 
 The current verified test result is one Spring context test passing with zero
 failures and zero errors. The severity engine, escalation engine,
 recommendation generator and REST endpoints are scheduled for the remaining
 milestone days.
-
-See [component-3-feedback-engine/DEVELOPMENT_PLAN.md](component-3-feedback-engine/DEVELOPMENT_PLAN.md)
-for the daily schedule and completion evidence.
 
 ## Component 4: Analytics and Web Dashboard
 
@@ -245,28 +213,5 @@ implemented as the component contracts mature.
 - Keep component-specific changes inside the relevant component directory.
 - Commit verified daily progress to the relevant Git branch.
 - Confirm before committing and pushing milestone work.
-
-## Contribution history recorded in Git
-
-The repository history currently records the following major contributions:
-
-- **Hishen** - transferred the initial Sentinel component files and folders
-  into the repository.
-- **Supun Dulshan** - created the shared component and project folder
-  structure.
-- **Ruwaneke Pathirage** - merged the initial team contribution into the
-  repository.
-- **Ruwaneke** - created and pushed the Component 3 Spring Boot prototype,
-  development schedule, application configuration and initial context test.
-
-This summary reflects the commits and files currently visible in the
-repository. It is not a replacement for the team's individual contribution
-log.
-
-
-The repository also contains `main`, `feature/component-2-backend-foundation`,
-`feature/analytics` and `hishen` branches.
-
-## License and academic use
 
 This repository is an academic research project for the J26-IT-394 team.
