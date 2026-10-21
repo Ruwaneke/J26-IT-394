@@ -24,6 +24,7 @@ public record PolicyProperties(
         @NotBlank String version,
         @Valid @NotNull Weights weights,
         @Positive int pressureSaturation,
+        boolean reopensCountAsRepeats,
         @Valid @NotNull Recency recency,
         @Valid @NotNull Levels levels,
         @Valid @NotNull Mastery mastery,

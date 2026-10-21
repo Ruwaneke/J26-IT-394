@@ -6,7 +6,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * Priority score P = wS*S + wR*Rn + wI*In + wW*(1 - M) + wRec*Rec, with every term
- * reported separately so the "Why this level?" panel can show it.
+ * reported separately so the "Why this level?" panel can show it. When the policy says
+ * so, reopened fixes count toward repeat pressure (Rn).
  */
 @Service
 public class ScoringService {
@@ -21,10 +22,15 @@ public class ScoringService {
         PolicyProperties.Weights weights = policy.weights();
         return new ScoreBreakdown(
                 weights.severity() * severityFactor(severity),
-                weights.repeat() * pressure(history.repeats30d()),
+                weights.repeat() * pressure(repeatCount(history)),
                 weights.ignore() * pressure(history.ignored30d()),
                 weights.weakness() * (1 - mastery),
                 weights.recency() * recency(history.lastSimilarDaysAgo()));
+    }
+
+    int repeatCount(DeveloperHistory history) {
+        return history.repeats30d()
+                + (policy.reopensCountAsRepeats() ? history.reopened30d() : 0);
     }
 
     double severityFactor(Severity severity) {

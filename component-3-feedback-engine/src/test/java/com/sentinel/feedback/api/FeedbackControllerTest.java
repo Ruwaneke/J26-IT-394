@@ -31,7 +31,7 @@ class FeedbackControllerTest {
                 .andExpect(jsonPath("$.score").value(33.75))
                 .andExpect(jsonPath("$.breakdown.severity").value(26.25))
                 .andExpect(jsonPath("$.mastery").value(0.5))
-                .andExpect(jsonPath("$.policyVersion").value("1.0.0"))
+                .andExpect(jsonPath("$.policyVersion").value("1.1.0"))
                 .andExpect(jsonPath("$.template.title").value("Use parameterized database queries"));
     }
 
