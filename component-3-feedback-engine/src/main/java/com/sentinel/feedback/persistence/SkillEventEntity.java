@@ -63,4 +63,8 @@ public class SkillEventEntity {
     public double getMasteryAfter() {
         return masteryAfter;
     }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
 }

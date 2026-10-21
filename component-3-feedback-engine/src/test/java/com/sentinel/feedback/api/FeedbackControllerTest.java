@@ -33,7 +33,7 @@ class FeedbackControllerTest {
                 .andExpect(jsonPath("$.score").value(33.75))
                 .andExpect(jsonPath("$.breakdown.severity").value(26.25))
                 .andExpect(jsonPath("$.mastery").value(0.5))
-                .andExpect(jsonPath("$.policyVersion").value("1.1.0"))
+                .andExpect(jsonPath("$.policyVersion").value("1.2.0"))
                 .andExpect(jsonPath("$.template.title").value("Use parameterized database queries"));
     }
 
@@ -86,7 +86,7 @@ class FeedbackControllerTest {
     void exposesActivePolicy() throws Exception {
         mockMvc.perform(get("/api/v1/policy"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.version").value("1.1.0"))
+                .andExpect(jsonPath("$.version").value("1.2.0"))
                 .andExpect(jsonPath("$.weights.severity").value(35.0))
                 .andExpect(jsonPath("$.levels.l2").value(25.0));
     }

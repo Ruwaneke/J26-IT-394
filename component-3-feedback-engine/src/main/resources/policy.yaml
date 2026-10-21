@@ -8,8 +8,10 @@
 #   1.1.0  tuned on the 32 tuning scenarios only (see PolicyTuningTest):
 #          L2 threshold 30 -> 25, mastered-threshold 0.75 -> 0.65,
 #          reopened fixes count toward repeat pressure
+#   1.2.0  adds fatigue-aware delivery (Plan B): interruption budget, cooldown,
+#          de-escalation after quick fixes; scoring unchanged from 1.1.0
 policy:
-  version: 1.1.0
+  version: 1.2.0
 
   # Priority score P = severity*S + repeat*Rn + ignore*In + weakness*(1 - M) + recency*Rec
   weights:
@@ -53,3 +55,13 @@ policy:
     - severity: CRITICAL
       min-level: 2
       reason: Critical findings always get at least guided feedback
+
+  # Alert-fatigue controls: they lower the delivery channel, never the warning itself
+  fatigue:
+    interrupts-per-hour: 3        # popups/panels per developer per hour before quieter delivery
+    cooldown-minutes: 10          # same CWE in the same file is not re-popped within this window
+    quick-dismiss-seconds: 2      # closed faster than this without expanding = quick dismissal
+    quick-fix-minutes: 10         # a fix within this time counts as a quick fix
+    de-escalation-quick-fixes: 3  # this many quick fixes in a row lower the level by one
+    exempt-cwes: [CWE-798]        # never quietened
+    exempt-severities: [CRITICAL] # never quietened

@@ -35,13 +35,18 @@ public class DecisionService {
     }
 
     public FeedbackDecision decide(FeedbackEvent event, DeveloperHistory history) {
+        return decide(event, history, false);
+    }
+
+    /** @param quickFixStreak whether the developer's last few warnings for this CWE were fixed quickly */
+    public FeedbackDecision decide(FeedbackEvent event, DeveloperHistory history, boolean quickFixStreak) {
         VulnerabilityType type = VulnerabilityType.fromCwe(event.cwe());
         double mastery = skillModel.currentMastery(history.devHash(), type.cweId());
 
         ScoreBreakdown breakdown = scoring.compute(event.severity(), history, mastery).rounded();
         double score = ScoreBreakdown.round2(breakdown.total());
         LevelMapper.LevelDecision level =
-                levelMapper.decide(score, type, event.severity(), mastery, history);
+                levelMapper.decide(score, type, event.severity(), mastery, history, quickFixStreak);
 
         return new FeedbackDecision(
                 "dec-" + UUID.randomUUID(),
@@ -55,7 +60,10 @@ public class DecisionService {
                 reasons(type, history, mastery),
                 level.adjustments(),
                 policy.version(),
-                templates.getTemplate(type));
+                templates.getTemplate(type),
+                Channel.forLevel(level.level()),
+                List.of(),
+                null);
     }
 
     private List<String> reasons(VulnerabilityType type, DeveloperHistory history, double mastery) {

@@ -141,7 +141,7 @@ class ScenarioEvaluationTest {
 
     private static PolicyProperties withMastery(PolicyProperties p, PolicyProperties.Mastery mastery) {
         return new PolicyProperties(p.version(), p.weights(), p.pressureSaturation(), p.reopensCountAsRepeats(),
-                p.recency(), p.levels(), mastery, p.overrides());
+                p.recency(), p.levels(), mastery, p.overrides(), p.fatigue());
     }
 
     private List<Row> rows(PolicyProperties policy) {

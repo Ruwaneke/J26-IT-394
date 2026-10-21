@@ -73,7 +73,7 @@ final class ScenarioRunner {
         DecisionService decisions = new DecisionService(policy, skills, new ScoringService(policy),
                 new LevelMapper(policy), new RecommendationTemplateService());
         FeedbackDecision decision = decisions.decide(new FeedbackEvent("e-" + scenario.id(),
-                scenario.event().cwe(), scenario.event().severity(), "java", 1, null), history);
+                scenario.event().cwe(), scenario.event().severity(), "java", 1, null, null), history);
         return new Result(decision.level(), decision.score(), decision.mastery());
     }
 

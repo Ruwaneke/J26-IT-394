@@ -28,7 +28,8 @@ public record PolicyProperties(
         @Valid @NotNull Recency recency,
         @Valid @NotNull Levels levels,
         @Valid @NotNull Mastery mastery,
-        @Valid List<LevelOverride> overrides
+        @Valid List<LevelOverride> overrides,
+        @Valid @NotNull Fatigue fatigue
 ) {
     public PolicyProperties {
         overrides = overrides == null ? List.of() : List.copyOf(overrides);
@@ -58,6 +59,25 @@ public record PolicyProperties(
             @Positive double halfLifeDays,
             @DecimalMin("0.0") @DecimalMax("1.0") double masteredThreshold
     ) {
+    }
+
+    /**
+     * Alert-fatigue controls (Plan B). They change how a notice is delivered, never
+     * whether it exists, and never touch exempt findings.
+     */
+    public record Fatigue(
+            @Positive int interruptsPerHour,
+            @Min(0) int cooldownMinutes,
+            @Positive int quickDismissSeconds,
+            @Positive int quickFixMinutes,
+            @Positive int deEscalationQuickFixes,
+            List<String> exemptCwes,
+            List<Severity> exemptSeverities
+    ) {
+        public Fatigue {
+            exemptCwes = exemptCwes == null ? List.of() : List.copyOf(exemptCwes);
+            exemptSeverities = exemptSeverities == null ? List.of() : List.copyOf(exemptSeverities);
+        }
     }
 
     /** A minimum level for findings matching a CWE and/or a severity. */

@@ -71,6 +71,32 @@ class LevelMapperTest {
     }
 
     @Test
+    void quickFixStreakLowersOneLevel() {
+        LevelMapper.LevelDecision decision = mapper.decide(
+                60, VulnerabilityType.SQL_INJECTION, Severity.HIGH, 0.50, ONE_IGNORE, true);
+
+        assertEquals(FeedbackLevel.L2, decision.level());
+        assertTrue(decision.adjustments().get(0).contains("fixed within 10 minutes"));
+    }
+
+    @Test
+    void masteryReliefAndQuickFixStreakDoNotStack() {
+        LevelMapper.LevelDecision decision = mapper.decide(
+                60, VulnerabilityType.SQL_INJECTION, Severity.HIGH, 0.90, NO_IGNORES, true);
+
+        assertEquals(FeedbackLevel.L2, decision.level());
+        assertEquals(1, decision.adjustments().size());
+    }
+
+    @Test
+    void quickFixStreakCannotPushSecretBelowItsFloor() {
+        LevelMapper.LevelDecision decision = mapper.decide(
+                60, VulnerabilityType.HARDCODED_SECRET, Severity.HIGH, 0.50, ONE_IGNORE, true);
+
+        assertEquals(FeedbackLevel.L3, decision.level());
+    }
+
+    @Test
     void masteryReliefCannotPushSecretBelowItsFloor() {
         LevelMapper.LevelDecision decision = mapper.decide(
                 60, VulnerabilityType.HARDCODED_SECRET, Severity.HIGH, 0.90, NO_IGNORES);

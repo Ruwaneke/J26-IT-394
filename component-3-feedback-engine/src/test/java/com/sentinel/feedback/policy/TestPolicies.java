@@ -30,7 +30,9 @@ public final class TestPolicies {
                 List.of(
                         new PolicyProperties.LevelOverride("CWE-798", null, 3, "secret floor"),
                         new PolicyProperties.LevelOverride(null, Severity.CRITICAL, 2,
-                                "critical floor")));
+                                "critical floor")),
+                new PolicyProperties.Fatigue(3, 10, 2, 10, 3, List.of("CWE-798"),
+                        List.of(Severity.CRITICAL)));
     }
 
     /** The policy actually shipped in src/main/resources/policy.yaml. */

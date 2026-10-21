@@ -73,7 +73,7 @@ class PolicyTuningTest {
                 base.recency(), new PolicyProperties.Levels(l2, l3, l4),
                 new PolicyProperties.Mastery(m.initial(), m.fixGain(), m.ignoreLoss(), m.repeatLoss(),
                         m.reopenLoss(), m.halfLifeDays(), mastered),
-                base.overrides());
+                base.overrides(), base.fatigue());
     }
 
     private static int changes(PolicyProperties base, PolicyProperties p) {
