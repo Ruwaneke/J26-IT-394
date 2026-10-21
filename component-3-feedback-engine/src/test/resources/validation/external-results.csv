@@ -1,0 +1,3 @@
+id,cwe,severity,repeats30d,ignored30d,fixed30d,reopened30d,lastSimilarDaysAgo,pastActions,expectedLevel
+EXAMPLE-01,CWE-89,HIGH,0,0,0,0,,,2
+EXAMPLE-02,CWE-89,HIGH,3,2,1,0,2,IGNORE REPEAT IGNORE REPEAT FIX,3
