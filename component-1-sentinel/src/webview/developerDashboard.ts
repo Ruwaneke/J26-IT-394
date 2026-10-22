@@ -5,8 +5,10 @@
  *
  * Navigation categories:
  *   Shift     — live shift session tracker, shift KPIs, assigned shifts, history
- *   Detect    — sub-tabs: Warnings (live findings), Fixed Rate, History (Neon DB tracker)
- *   Behaviour — behaviour pattern, responsiveness, repeated mistakes, activity log
+ *   Detect    — sub-tabs: Warnings (live findings), Vulnerability Types (detection catalogue
+ *               grouped by OWASP category with fixed-vs-identified progress)
+ *   Behaviour — sub-tabs: Overview (pattern, responsiveness, repeated mistakes, activity log),
+ *               Fixed Rate, History (Neon DB tracker)
  *   Feedback  — personalised recommendations + helpful/not-helpful ratings
  *   Analytics — 14-day trend, severity & OWASP distribution, hot files, Component 2 API status
  *
@@ -24,7 +26,9 @@
  *   6. State-of-the-art dark glassmorphic UI aesthetics.
  */
 
-import { SecurityFinding } from '../analyzer/types.js';
+import { SecurityFinding, VulnerabilityType, VULNERABILITY_TO_OWASP, OWASP_TOP_10_2021 } from '../analyzer/types.js';
+import { VULNERABILITY_METADATA } from '../diagnostics/vulnerabilityMetadata.js';
+import { AiFixProposal, AiFixState, AI_FIX_CONTEXT_LINES } from '../ai/aiFixEngine.js';
 import { AuthSession } from '../auth/authManager.js';
 import { Shift, ShiftSession } from '../data/projectStore.js';
 import { DbVulnerabilityRecord, VulnerabilityStats, UserActivityLog } from '../data/neonDatabaseService.js';
@@ -75,6 +79,77 @@ function scoreColor(n: number): string {
   return n >= 80 ? '#10b981' : n >= 50 ? '#f59e0b' : '#ef4444';
 }
 
+// ── Detect › AI Fixing (also used by extension.ts to patch a card in place) ───
+
+export interface AiFixDashboardData {
+  /** A Gemini API key is stored in SecretStorage or present in the environment */
+  configured: boolean;
+  model: string;
+  states: Record<string, AiFixState>;
+  /** Most recent applied proposals, newest first */
+  history: AiFixProposal[];
+}
+
+export function buildAiFixBodyHtml(findingId: string, state: AiFixState | undefined): string {
+  const id = esc(findingId);
+  if (!state) {
+    return `<div class="aifix-actions"><button class="btn-action btn-copy-fix" onclick="aiFix('${id}')">${icon('sparkles')} Generate AI Fix</button></div>`;
+  }
+  if (state.status === 'pending') {
+    return `<div class="aifix-pending"><span class="aifix-spinner"></span> Gemini is generating a fix and Sentinel is verifying it…</div>`;
+  }
+  if (state.status === 'error') {
+    return `<div class="aifix-error">${icon('alert-circle')} ${esc(state.error)}</div>
+      <div class="aifix-actions"><button class="btn-action btn-inspect" onclick="aiFix('${id}')">${icon('refresh')} Retry</button></div>`;
+  }
+  const p = state.proposal;
+  const applied = state.status === 'applied';
+  return `
+    <div class="aifix-verdict ${p.verified ? 'ok' : 'warn'}">
+      ${icon(p.verified ? 'shield-check' : 'alert-triangle')}
+      <div><strong>${p.verified ? 'Verified by Sentinel rules' : 'Not verified — review carefully'}</strong>
+      <div class="aifix-verdict-note">${esc(p.verifyNote)}${p.attempts > 1 ? ` (after ${p.attempts} attempts)` : ''}</div></div>
+    </div>
+    <div class="expl-section fix-section" style="margin:10px 0">
+      <div class="expl-label fix-label">${icon('sparkles')} What the AI changed</div>
+      <div class="expl-text">${esc(p.explanation)}</div>
+      ${p.changes.length ? `<ul class="aifix-changes">${p.changes.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+    </div>
+    <div class="code-compare-grid">
+      <div class="code-box vulnerable-box">
+        <div class="code-title danger-title">${icon('code')} Current code (lines ${p.startLine}–${p.endLine})</div>
+        <pre class="code-pre danger-pre">${esc(p.originalCode)}</pre>
+      </div>
+      <div class="code-box fixed-box">
+        <div class="code-title safe-title">${icon('check-circle')} AI fix · ${esc(p.model)}</div>
+        <pre class="code-pre safe-pre">${esc(p.fixedCode)}</pre>
+      </div>
+    </div>
+    <div class="aifix-actions">
+      ${applied
+        ? `<span class="fixed-badge">${icon('check-circle')} Applied — waiting for the real-time re-scan</span>`
+        : `<button class="btn-action btn-start-shift" onclick="aiFixApply('${id}')">${icon('check')} Apply Fix</button>
+           <button class="btn-action btn-inspect" onclick="aiFixDiff('${id}')">${icon('eye')} Open Diff</button>
+           <button class="btn-action btn-inspect" onclick="aiFixCopy('${id}')">${icon('copy')} Copy</button>
+           <button class="btn-action btn-inspect" onclick="aiFix('${id}')">${icon('refresh')} Regenerate</button>
+           <button class="btn-action btn-ignore" onclick="aiFixDiscard('${id}')">${icon('x')} Discard</button>`}
+    </div>`;
+}
+
+export function buildAiFixSummaryHtml(findings: SecurityFinding[], aiFix: AiFixDashboardData): string {
+  const states = findings.map(f => aiFix.states[f.id]).filter(Boolean) as AiFixState[];
+  const ready = states.filter(s => s.status === 'ready');
+  const verified = ready.filter(s => s.status === 'ready' && s.proposal.verified).length;
+  const pending = states.filter(s => s.status === 'pending').length;
+  return `<div class="progress-metric-chips">
+    <div class="metric-chip"><span class="chip-num" style="color:var(--t-red)">${findings.length}</span><span class="chip-label">Identified now</span></div>
+    <div class="metric-chip"><span class="chip-num">${pending}</span><span class="chip-label">Generating</span></div>
+    <div class="metric-chip"><span class="chip-num" style="color:var(--t-blue)">${ready.length}</span><span class="chip-label">Fixes ready</span></div>
+    <div class="metric-chip"><span class="chip-num" style="color:var(--t-green)">${verified}</span><span class="chip-label">Verified fixes</span></div>
+    <div class="metric-chip"><span class="chip-num">${aiFix.history.length}</span><span class="chip-label">Applied this session</span></div>
+  </div>`;
+}
+
 export function buildDeveloperDashboardHtml(
   summary: any,
   findings: SecurityFinding[],
@@ -92,6 +167,7 @@ export function buildDeveloperDashboardHtml(
   activities: UserActivityLog[] = [],
   insights?: DeveloperInsights,
   apiStatus: ApiServerStatus = { running: false, url: '', error: null },
+  aiFix: AiFixDashboardData = { configured: false, model: '', states: {}, history: [] },
 ): string {
   const devId = session.githubUsername ?? session.username;
   const devInitial = esc((session.displayName || session.username || 'D').charAt(0).toUpperCase());
@@ -325,6 +401,88 @@ export function buildDeveloperDashboardHtml(
     const rate = all.length ? Math.round((fx / all.length) * 1000) / 10 : 0;
     return barRow(`<span class="sev-dot" style="background:${sevColor(k)}"></span>${k}`, rate, 100,
       `${rate}% <span class="muted">(${fx}/${all.length})</span>`, scoreColor(rate), `${k}: ${fx} of ${all.length} fixed`);
+  }).join('');
+
+  // ── 7b. Detect › Vulnerability Types (detection catalogue by OWASP category) ─
+  // open = live editor findings only (re-rendered on every analysis event), so stale
+  // OPEN rows in the DB never count as "identified"; fixed/ignored = Neon DB history.
+  type TypeCounts = { fixed: number; open: number; ignored: number; identified: number };
+  const pct1 = (n: number, d: number) => d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
+  const liveByType = new Map<string, number>();
+  for (const f of findings) { liveByType.set(f.type, (liveByType.get(f.type) ?? 0) + 1); }
+  const countsFor = (t: string): TypeCounts => {
+    const recs = dbRecords.filter(r => r.vulnerabilityType === t);
+    const fixed = recs.filter(r => r.status === 'FIXED').length;
+    const ignored = recs.filter(r => r.status === 'IGNORED').length;
+    const open = liveByType.get(t) ?? 0;
+    return { fixed, open, ignored, identified: open + fixed + ignored };
+  };
+  const sumCounts = (list: TypeCounts[]): TypeCounts => list.reduce(
+    (a, c) => ({ fixed: a.fixed + c.fixed, open: a.open + c.open, ignored: a.ignored + c.ignored, identified: a.identified + c.identified }),
+    { fixed: 0, open: 0, ignored: 0, identified: 0 });
+  const typeTitle = (t: string) =>
+    esc((VULNERABILITY_METADATA[t as VulnerabilityType]?.title ?? t.replace(/_/g, ' ')).replace(/\s*\(A\d{2}\)$/, ''));
+  const segBar = (c: TypeCounts, slim = true) => `
+    <div class="progress-track${slim ? ' slim' : ''}" title="${c.identified ? `Fixed ${c.fixed} · Open ${c.open} · Ignored ${c.ignored} of ${c.identified} identified` : 'Not identified in your code yet'}">
+      ${c.identified ? `
+        <div class="progress-seg-fixed" style="width:${pct1(c.fixed, c.identified)}%"></div>
+        <div class="progress-seg-open" style="width:${pct1(c.open, c.identified)}%"></div>
+        <div class="progress-seg-ignored" style="width:${pct1(c.ignored, c.identified)}%"></div>` : ''}
+    </div>`;
+
+  const knownTypes = Object.values(VulnerabilityType) as string[];
+  const catGroups = Object.entries(OWASP_TOP_10_2021).map(([key, cat]) => ({
+    id: cat.id, name: cat.name, url: cat.url,
+    types: knownTypes.filter(t => VULNERABILITY_TO_OWASP[t as VulnerabilityType] === key),
+  }));
+  // Legacy / unmapped types that still appear in the history
+  const otherTypes = [...new Set([...dbRecords.map(r => r.vulnerabilityType), ...findings.map(f => f.type as string)])]
+    .filter(t => t && !knownTypes.includes(t));
+  if (otherTypes.length) { catGroups.push({ id: 'Other', name: 'Other / legacy types', url: '', types: otherTypes }); }
+
+  const catData = catGroups.map(g => {
+    const types = g.types.map(t => ({ type: t, c: countsFor(t) }));
+    return { ...g, typeRows: types, c: sumCounts(types.map(x => x.c)) };
+  });
+  const catalogTotals = sumCounts(catData.map(g => g.c));
+  const identifiedTypeCount = catData.reduce((a, g) => a + g.typeRows.filter(x => x.c.identified > 0).length, 0);
+  const liveTypeCount = liveByType.size;
+  const catsWithFindings = catData.filter(g => g.c.identified > 0);
+  const catsFullyFixed = catsWithFindings.filter(g => g.c.fixed === g.c.identified).length;
+
+  const typeCatalogCards = catData.map(g => {
+    const rate = pct1(g.c.fixed, g.c.identified);
+    const rows = g.typeRows.map(({ type, c }) => {
+      const r = pct1(c.fixed, c.identified);
+      const desc = VULNERABILITY_METADATA[type as VulnerabilityType]?.description ?? '';
+      return `
+        <div class="type-row${c.identified ? '' : ' is-clean'}" data-identified="${c.identified > 0}" title="${esc(desc)}">
+          <div class="type-row-head">
+            <span class="type-name">${typeTitle(type)}</span>
+            ${c.open ? `<span class="type-live">${c.open} open</span>` : ''}
+            <span class="type-count">${c.identified
+              ? `<strong style="color:${scoreColor(r)}">${r}%</strong> <span class="muted">(${c.fixed}/${c.identified} fixed)</span>`
+              : `<span class="muted">${icon('shield-check')} Not identified</span>`}</span>
+          </div>
+          ${segBar(c)}
+        </div>`;
+    }).join('');
+    return `
+      <div class="cat-card" data-identified="${g.c.identified > 0}">
+        <div class="cat-head">
+          <div>
+            <div class="cat-id">${g.url ? `<a href="#" onclick="openUrl('${esc(g.url)}');return false;" title="Open OWASP reference">${esc(g.id)} ${icon('external-link')}</a>` : esc(g.id)}</div>
+            <div class="cat-name">${esc(g.name)}</div>
+            <div class="cat-meta">${g.types.length} detectable type${g.types.length === 1 ? '' : 's'} · ${g.c.identified} identified · ${g.c.open} open</div>
+          </div>
+          <div class="cat-stat">
+            <span class="cat-rate" style="color:${g.c.identified ? scoreColor(rate) : 'var(--text-3)'}">${g.c.identified ? `${rate}%` : '—'}</span>
+            <span class="chip-label">${g.c.identified ? `Fixed ${g.c.fixed}/${g.c.identified}` : 'Clean'}</span>
+          </div>
+        </div>
+        ${segBar(g.c, false)}
+        <div class="type-list">${rows}</div>
+      </div>`;
   }).join('');
 
   // ── 8. Shift (live session tracker) ─────────────────────────────────────────
@@ -1143,6 +1301,50 @@ body {
 .fb-refs a:hover { text-decoration: underline; }
 .fb-textarea { width: 100%; min-height: 80px; background: rgba(0, 0, 0, calc(0.3 * var(--shade-k))); border: 1px solid var(--border-card); border-radius: 8px; color: var(--text-strong); font-family: inherit; font-size: 0.82em; padding: 10px; resize: vertical; }
 
+/* ── Detect › Vulnerability Types ── */
+.progress-track.slim { height: 6px; box-shadow: none; }
+.progress-track.slim .progress-seg-fixed { box-shadow: none; }
+.progress-hero-card .legend { margin-top: 2px; }
+.types-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+.cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 16px; }
+.cat-card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.cat-card[data-identified="false"] { opacity: 0.85; }
+.cat-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.cat-id { font-family: 'Fira Code', monospace; font-size: 0.7em; color: var(--text-muted); }
+.cat-id a { color: var(--t-cyan); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.cat-id a:hover { text-decoration: underline; }
+.cat-name { font-size: 0.95em; font-weight: 700; color: var(--text-strong); margin-top: 2px; }
+.cat-meta { font-size: 0.72em; color: var(--text-secondary); margin-top: 3px; }
+.cat-stat { display: flex; flex-direction: column; align-items: flex-end; text-align: right; flex-shrink: 0; }
+.cat-rate { font-size: 1.4em; font-weight: 800; line-height: 1.1; }
+.type-list { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border-card); padding-top: 12px; }
+.type-row { display: flex; flex-direction: column; gap: 5px; }
+.type-row-head { display: flex; align-items: center; gap: 8px; font-size: 0.78em; }
+.type-name { color: var(--text-1); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-row.is-clean .type-name { color: var(--text-secondary); font-weight: 500; }
+.type-live { font-size: 0.85em; font-weight: 700; color: var(--t-red); background: rgba(239, 68, 68, 0.12); border-radius: 100px; padding: 1px 7px; white-space: nowrap; }
+.type-count { margin-left: auto; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+
+/* ── Detect › AI Fixing ── */
+.aifix-key { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; font-size: 0.76em; }
+.aifix-key code { font-family: 'Fira Code', monospace; }
+.aifix-key-ok { color: var(--t-green); display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.aifix-key-missing { color: var(--t-amber, #f59e0b); display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.aifix-card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.aifix-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.aifix-snippet { border-radius: 8px; max-height: 120px; overflow: auto; margin: 0; }
+.aifix-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.aifix-pending { display: flex; align-items: center; gap: 10px; font-size: 0.8em; color: var(--text-secondary); padding: 6px 0; }
+.aifix-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(var(--ink), 0.15); border-top-color: var(--t-cyan); animation: aifix-spin 0.8s linear infinite; }
+@keyframes aifix-spin { to { transform: rotate(360deg); } }
+.aifix-error { font-size: 0.8em; color: var(--t-red); display: flex; align-items: center; gap: 6px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 9px 12px; }
+.aifix-verdict { display: flex; gap: 10px; align-items: flex-start; font-size: 0.8em; border-radius: 10px; padding: 10px 12px; border: 1px solid; }
+.aifix-verdict.ok { color: var(--t-green); background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.3); }
+.aifix-verdict.warn { color: #f59e0b; background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.3); }
+.aifix-verdict-note { color: var(--text-secondary); margin-top: 2px; }
+.aifix-changes { margin: 8px 0 0 18px; font-size: 0.8em; color: var(--text-1); line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) { .aifix-spinner { animation: none; } }
+
 /* ── Behaviour ── */
 .pattern-card { display: flex; align-items: center; gap: 16px; background: var(--bg-card); border: 1px solid; border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
 .pattern-icon { font-size: 2em; }
@@ -1266,13 +1468,21 @@ ${ICON_CSS}
     </button>
     <div class="nav-sub-group" id="nav-detect-sub" role="menu">
       <button class="nav-sub active" id="nav-detect-warnings" onclick="showSection('detect-warnings')">${icon('alert-triangle')} Warnings <span class="nav-sub-count">${findings.length}</span></button>
-      <button class="nav-sub" id="nav-detect-fixrate" onclick="showSection('detect-fixrate')">${icon('check-circle')} Fixed Rate <span class="nav-sub-count">${ins.totals.fixRate}%</span></button>
-      <button class="nav-sub" id="nav-detect-history" onclick="showSection('detect-history')">${icon('database')} History <span class="nav-sub-count">${dbRecords.length}</span></button>
+      <button class="nav-sub" id="nav-detect-types" onclick="showSection('detect-types')" title="Vulnerability types with live warnings right now">${icon('layers')} Vulnerability Types <span class="nav-sub-count">${liveTypeCount}</span></button>
+      <button class="nav-sub" id="nav-detect-aifix" onclick="showSection('detect-aifix')">${icon('sparkles')} AI Fixing <span class="nav-sub-count">${findings.length}</span></button>
     </div>
     </div>
-    <button class="nav-btn" id="nav-behaviour" onclick="showSection('behaviour')">
+    <div class="nav-dropdown open" id="dd-behaviour">
+    <button class="nav-btn" id="nav-behaviour" onclick="toggleDropdown('behaviour', event)" aria-haspopup="true" aria-expanded="true" aria-controls="nav-behaviour-sub">
       ${icon('activity')} Behaviour
+      <span class="nav-chevron">${icon('chevron-down')}</span>
     </button>
+    <div class="nav-sub-group" id="nav-behaviour-sub" role="menu">
+      <button class="nav-sub" id="nav-behaviour-overview" onclick="showSection('behaviour-overview')">${icon('activity')} Overview</button>
+      <button class="nav-sub" id="nav-behaviour-fixrate" onclick="showSection('behaviour-fixrate')">${icon('check-circle')} Fixed Rate <span class="nav-sub-count">${ins.totals.fixRate}%</span></button>
+      <button class="nav-sub" id="nav-behaviour-history" onclick="showSection('behaviour-history')">${icon('database')} History <span class="nav-sub-count">${dbRecords.length}</span></button>
+    </div>
+    </div>
     <button class="nav-btn" id="nav-feedback" onclick="showSection('feedback')">
       ${icon('message')} Feedback
       ${ins.feedback.filter(f => f.priority === 'HIGH').length > 0 ? `<span class="nav-badge">${ins.feedback.filter(f => f.priority === 'HIGH').length}</span>` : ''}
@@ -1312,8 +1522,8 @@ ${ICON_CSS}
     <!-- ══ DETECT › sub-tab bar (shared) ══ -->
     <div class="subtab-bar" id="detectSubtabs">
       <button class="subtab active" id="sub-detect-warnings" onclick="showSection('detect-warnings')">${icon('alert-triangle')} Warnings (${findings.length})</button>
-      <button class="subtab" id="sub-detect-fixrate" onclick="showSection('detect-fixrate')">${icon('check-circle')} Fixed Rate (${ins.totals.fixRate}%)</button>
-      <button class="subtab" id="sub-detect-history" onclick="showSection('detect-history')">${icon('database')} History (${dbRecords.length})</button>
+      <button class="subtab" id="sub-detect-types" onclick="showSection('detect-types')">${icon('layers')} Vulnerability Types (${liveTypeCount} live)</button>
+      <button class="subtab" id="sub-detect-aifix" onclick="showSection('detect-aifix')">${icon('sparkles')} AI Fixing (${findings.length})</button>
     </div>
 
     <!-- ══ DETECT › WARNINGS ══ -->
@@ -1340,8 +1550,117 @@ ${ICON_CSS}
       </div>
     </div>
 
-    <!-- ══ DETECT › FIXED RATE ══ -->
-    <div class="section-content" id="section-detect-fixrate">
+    <!-- ══ DETECT › VULNERABILITY TYPES ══ -->
+    <div class="section-content" id="section-detect-types">
+      <div class="progress-hero-card">
+        <div class="progress-hero-header">
+          <div class="progress-title-wrap">
+            <div>
+              <div class="progress-title">${icon('layers')} Detectable Vulnerability Types</div>
+              <div class="progress-subtitle">${knownTypes.length} vulnerability types across ${catGroups.filter(g => g.id !== 'Other').length} OWASP Top 10 (2021) categories, checked by ${rulesCount} detection rules in real time</div>
+            </div>
+          </div>
+          <div class="progress-big-stat">
+            <span class="fix-num">${catalogTotals.identified === 0 ? '100%' : `${pct1(catalogTotals.fixed, catalogTotals.identified)}%`}</span>
+            <span class="fix-label">${catalogTotals.identified === 0 ? 'Clean (0/0)' : `Fixed (${catalogTotals.fixed}/${catalogTotals.identified})`}</span>
+          </div>
+        </div>
+        <div class="progress-bar-container">${segBar(catalogTotals, false)}</div>
+        <div class="legend">
+          <span><span class="legend-swatch" style="background:#10b981"></span>Fixed (${catalogTotals.fixed})</span>
+          <span><span class="legend-swatch" style="background:#ef4444"></span>Open (${catalogTotals.open})</span>
+          <span><span class="legend-swatch" style="background:var(--text-3)"></span>Ignored (${catalogTotals.ignored})</span>
+        </div>
+        <div class="progress-metric-chips">
+          <div class="metric-chip"><span class="chip-num" style="color:var(--t-blue)">${knownTypes.length}</span><span class="chip-label">Detectable types</span></div>
+          <div class="metric-chip"><span class="chip-num" style="color:${liveTypeCount ? 'var(--t-red)' : 'var(--t-green)'}">${liveTypeCount}</span><span class="chip-label">Types with live warnings</span></div>
+          <div class="metric-chip"><span class="chip-num">${identifiedTypeCount}</span><span class="chip-label">Types ever identified</span></div>
+          <div class="metric-chip"><span class="chip-num">${catsWithFindings.length}/${catData.length}</span><span class="chip-label">Categories with findings</span></div>
+          <div class="metric-chip"><span class="chip-num" style="color:var(--t-green)">${catsFullyFixed}</span><span class="chip-label">Categories fully fixed</span></div>
+          <div class="metric-chip"><span class="chip-num" style="color:var(--t-red)">${catalogTotals.open}</span><span class="chip-label">Open now</span></div>
+        </div>
+      </div>
+      <div class="filter-toolbar">
+        <div>
+          <h2 style="font-size:1.1em;font-weight:800;color:var(--text-strong);">Fix progress by category</h2>
+          <div style="font-size:0.75em;color:var(--text-secondary);">Fixed vs identified vulnerabilities for each OWASP category and each type Sentinel can detect</div>
+        </div>
+        <div class="types-filter">
+          <button class="btn-filter active" onclick="filterTypes(false, this)">All types (${knownTypes.length})</button>
+          <button class="btn-filter" onclick="filterTypes(true, this)">Identified only (${identifiedTypeCount})</button>
+        </div>
+      </div>
+      <div class="cat-grid" id="typeCatalog">${typeCatalogCards}</div>
+      <div class="empty-state" id="typesEmpty" style="display:none">${icon('shield-check')} No vulnerabilities identified yet — every category is clean.</div>
+    </div>
+
+    <!-- ══ DETECT › AI FIXING ══ -->
+    <div class="section-content" id="section-detect-aifix">
+      <div class="progress-hero-card">
+        <div class="progress-hero-header">
+          <div class="progress-title-wrap">
+            <div>
+              <div class="progress-title">${icon('sparkles')} AI Fixing</div>
+              <div class="progress-subtitle">Google Gemini generates a patch for each identified vulnerability, then Sentinel re-scans the patched code to check the fix before you apply it.</div>
+            </div>
+          </div>
+          <div class="aifix-key">
+            ${aiFix.configured
+              ? `<span class="aifix-key-ok">${icon('check-circle')} AI model connected · <code>${esc(aiFix.model)}</code></span>`
+              : `<span class="aifix-key-missing">${icon('alert-triangle')} No Gemini API key configured</span>`}
+            <button class="btn-action btn-inspect" onclick="aiFixSetKey()">${icon('pen')} ${aiFix.configured ? 'Change' : 'Set'} API key</button>
+          </div>
+        </div>
+        <div id="aifixSummary">${buildAiFixSummaryHtml(findings, aiFix)}</div>
+        <div class="fix-concept-banner">
+          <span>${icon('info')}</span>
+          <span>Up to ${AI_FIX_CONTEXT_LINES * 2 + 1} lines of code around each finding are sent to the Google Gemini API. Nothing is changed until you click <strong>Apply Fix</strong>. After that, the real-time engine marks the vulnerability <strong>FIXED</strong> once the warning disappears, and you can undo with Ctrl/Cmd+Z.</span>
+        </div>
+      </div>
+      <div class="filter-toolbar">
+        <div>
+          <h2 style="font-size:1.1em;font-weight:800;color:var(--text-strong);">Identified vulnerabilities</h2>
+          <div style="font-size:0.75em;color:var(--text-secondary);">Live warnings from your open files — updated in real time as you edit</div>
+        </div>
+        ${findings.length ? `<button class="btn-action btn-copy-fix" onclick="aiFixAll()">${icon('sparkles')} Generate fixes for all (${findings.length})</button>` : ''}
+      </div>
+      <div class="vuln-cards-list">
+        ${findings.length ? findings.map(f => `
+          <div class="aifix-card" id="aifix-card-${esc(f.id)}">
+            <div class="aifix-head">
+              <span class="sev-pill" style="background:${sevColor(f.severity)}22;color:${sevColor(f.severity)};border:1px solid ${sevColor(f.severity)}55">${f.severity}</span>
+              <div style="min-width:0">
+                <div class="vuln-title">${typeTitle(f.type)}</div>
+                <div class="vuln-file">${icon('file')} <code>${esc(f.fileName.replace(/\\/g, '/').split('/').pop() ?? f.fileName)}</code> : Line ${f.lineNumber}</div>
+              </div>
+              <button class="btn-jump" style="margin-left:auto" onclick="jumpToCode('${esc(f.fileName)}', ${f.lineNumber})">${icon('eye')} Jump</button>
+            </div>
+            <pre class="code-pre danger-pre aifix-snippet">${esc(f.codeSnippet.trim())}</pre>
+            <div class="aifix-body" id="aifix-body-${esc(f.id)}">${buildAiFixBodyHtml(f.id, aiFix.states[f.id])}</div>
+          </div>`).join('')
+          : `<div class="empty-state">${icon('shield-check')} No identified vulnerabilities — nothing to fix right now.</div>`}
+      </div>
+      ${aiFix.history.length ? `
+        <h3 class="block-title" style="margin-top:22px">${icon('history')} Recently applied AI fixes</h3>
+        <div class="activity-stream">${aiFix.history.map(p => `
+          <div class="activity-item"><div class="act-dot" style="background:${p.verified ? '#10b981' : '#f59e0b'}"></div>
+            <div class="act-content"><div class="act-header">
+              <span class="act-user">${typeTitle(p.vulnerabilityType)}</span>
+              <span class="act-type">${esc(p.fileName.replace(/\\/g, '/').split('/').pop())} · lines ${p.startLine}–${p.endLine}</span>
+              <span class="act-time">${fmtDate(p.generatedAt)}</span>
+            </div><div class="act-detail" style="font-family:inherit">${p.verified ? 'Verified' : 'Unverified'} · ${esc(p.model)}</div></div>
+          </div>`).join('')}</div>` : ''}
+    </div>
+
+    <!-- ══ BEHAVIOUR › sub-tab bar (shared) ══ -->
+    <div class="subtab-bar" id="behaviourSubtabs">
+      <button class="subtab" id="sub-behaviour-overview" onclick="showSection('behaviour-overview')">${icon('activity')} Overview</button>
+      <button class="subtab" id="sub-behaviour-fixrate" onclick="showSection('behaviour-fixrate')">${icon('check-circle')} Fixed Rate (${ins.totals.fixRate}%)</button>
+      <button class="subtab" id="sub-behaviour-history" onclick="showSection('behaviour-history')">${icon('database')} History (${dbRecords.length})</button>
+    </div>
+
+    <!-- ══ BEHAVIOUR › FIXED RATE ══ -->
+    <div class="section-content" id="section-behaviour-fixrate">
       <div class="progress-hero-card">
         <div class="progress-hero-header">
           <div class="progress-title-wrap">
@@ -1390,8 +1709,8 @@ ${ICON_CSS}
       </div>
     </div>
 
-    <!-- ══ DETECT › HISTORY (Neon DB tracker) ══ -->
-    <div class="section-content" id="section-detect-history">
+    <!-- ══ BEHAVIOUR › HISTORY (Neon DB tracker) ══ -->
+    <div class="section-content" id="section-behaviour-history">
       <div class="tracker-header-wrap">
         <div>
           <h2 class="tracker-title">${icon('database')} Vulnerability History</h2>
@@ -1434,8 +1753,8 @@ ${ICON_CSS}
       </div>
     </div>
 
-    <!-- ══ BEHAVIOUR ══ -->
-    <div class="section-content" id="section-behaviour">
+    <!-- ══ BEHAVIOUR › OVERVIEW ══ -->
+    <div class="section-content" id="section-behaviour-overview">
       <div class="page-head">
         <h2 class="page-title">${icon('activity')} Behaviour</h2>
         <div class="page-sub">How you respond to security warnings — this is the behaviour profile shared with Component 2 (Behaviour Tracker).</div>
@@ -1546,23 +1865,68 @@ window._vscode = acquireVsCodeApi();
 const vscode = window._vscode;
 const ICON_CHECK = ${JSON.stringify(icon('check'))};
 
-const DETECT_SECTIONS = ['detect-warnings', 'detect-fixrate', 'detect-history'];
+const NAV_GROUPS = {
+  detect: ['detect-warnings', 'detect-types', 'detect-aifix'],
+  behaviour: ['behaviour-overview', 'behaviour-fixrate', 'behaviour-history'],
+};
+// Section ids from before Fixed Rate / History moved under Behaviour
+const LEGACY_SECTIONS = { 'detect-fixrate': 'behaviour-fixrate', 'detect-history': 'behaviour-history', 'behaviour': 'behaviour-overview' };
 
 function showSection(id) {
   document.querySelectorAll('.section-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-btn, .nav-sub, .subtab').forEach(el => el.classList.remove('active'));
   const sec = document.getElementById('section-' + id);
   if (sec) sec.classList.add('active');
-  const isDetect = DETECT_SECTIONS.includes(id);
-  const nav = document.getElementById('nav-' + (isDetect ? 'detect' : id));
+  const group = Object.keys(NAV_GROUPS).find(g => NAV_GROUPS[g].includes(id));
+  const nav = document.getElementById('nav-' + (group || id));
   if (nav) nav.classList.add('active');
   const sub = document.getElementById('nav-' + id);
-  if (isDetect && sub) sub.classList.add('active');
+  if (group && sub) sub.classList.add('active');
   const tab = document.getElementById('sub-' + id);
   if (tab) tab.classList.add('active');
-  const bar = document.getElementById('detectSubtabs');
-  if (bar) bar.classList.toggle('visible', isDetect);
+  Object.keys(NAV_GROUPS).forEach(g => {
+    const bar = document.getElementById(g + 'Subtabs');
+    if (bar) bar.classList.toggle('visible', g === group);
+  });
   vscode.setState(Object.assign({}, vscode.getState() || {}, { section: id }));
+}
+
+// ── Detect › AI Fixing ──
+const AIFIX_PENDING_HTML = ${JSON.stringify(buildAiFixBodyHtml('', { status: 'pending', startedAt: '' }))};
+function aiFix(findingId) {
+  const body = document.getElementById('aifix-body-' + findingId);
+  if (body) body.innerHTML = AIFIX_PENDING_HTML;
+  vscode.postMessage({ command: 'AI_FIX_GENERATE', findingId });
+}
+function aiFixAll() { vscode.postMessage({ command: 'AI_FIX_GENERATE_ALL' }); }
+function aiFixApply(findingId) { vscode.postMessage({ command: 'AI_FIX_APPLY', findingId }); }
+function aiFixDiff(findingId) { vscode.postMessage({ command: 'AI_FIX_DIFF', findingId }); }
+function aiFixCopy(findingId) { vscode.postMessage({ command: 'AI_FIX_COPY', findingId }); }
+function aiFixDiscard(findingId) { vscode.postMessage({ command: 'AI_FIX_DISCARD', findingId }); }
+function aiFixSetKey() { vscode.postMessage({ command: 'AI_FIX_SET_KEY' }); }
+window.addEventListener('message', e => {
+  const m = e.data || {};
+  if (m.command !== 'AI_FIX_UPDATE') return;
+  const body = document.getElementById('aifix-body-' + m.findingId);
+  if (body && typeof m.html === 'string') body.innerHTML = m.html;
+  const sum = document.getElementById('aifixSummary');
+  if (sum && typeof m.summaryHtml === 'string') sum.innerHTML = m.summaryHtml;
+});
+
+function filterTypes(identifiedOnly, btn) {
+  document.querySelectorAll('.types-filter .btn-filter').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  let visibleCats = 0;
+  document.querySelectorAll('#typeCatalog .cat-card').forEach(card => {
+    const show = !identifiedOnly || card.getAttribute('data-identified') === 'true';
+    card.style.display = show ? '' : 'none';
+    if (show) visibleCats++;
+    card.querySelectorAll('.type-row').forEach(row => {
+      row.style.display = (!identifiedOnly || row.getAttribute('data-identified') === 'true') ? '' : 'none';
+    });
+  });
+  const empty = document.getElementById('typesEmpty');
+  if (empty) empty.style.display = visibleCats === 0 ? '' : 'none';
 }
 
 const isCompactNav = () => window.matchMedia('(max-width: 860px)').matches;
@@ -1602,8 +1966,9 @@ document.addEventListener('keydown', ev => {
 (function restoreSection() {
   const st = vscode.getState() || {};
   const dds = st.dropdowns || {};
-  setDropdown('detect', isCompactNav() ? false : dds.detect !== false);
-  showSection(st.section && document.getElementById('section-' + st.section) ? st.section : 'detect-warnings');
+  Object.keys(NAV_GROUPS).forEach(g => setDropdown(g, isCompactNav() ? false : dds[g] !== false));
+  const saved = LEGACY_SECTIONS[st.section] || st.section;
+  showSection(saved && document.getElementById('section-' + saved) ? saved : 'detect-warnings');
 })();
 
 // Live shift timer

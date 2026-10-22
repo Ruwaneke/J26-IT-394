@@ -22,7 +22,8 @@ import { NeonDatabaseService } from './data/neonDatabaseService.js';
 import { AuthManager } from './auth/authManager.js';
 import { buildLoginHtml } from './webview/loginView.js';
 import { buildLoadingHtml } from './webview/loadingView.js';
-import { buildDeveloperDashboardHtml } from './webview/developerDashboard.js';
+import { buildDeveloperDashboardHtml, buildAiFixBodyHtml, buildAiFixSummaryHtml, AiFixDashboardData } from './webview/developerDashboard.js';
+import { AiFixEngine, AiFixState, AiFixProposal, AiFixEngineOptions, describeAiFixError } from './ai/aiFixEngine.js';
 import { buildSupervisorDashboardHtml, setDeveloperStats } from './webview/supervisorDashboard.js';
 import { buildAdminDashboardHtml } from './webview/adminDashboard.js';
 import { AIEnhancedAnalyzer, AIEnhancedAnalyzerConfig } from './ai/aiEnhancedAnalyzer.js';
@@ -58,6 +59,17 @@ let debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 // Per-file finding cache (used by code actions)
 let findingsCache: Map<string, SecurityFinding[]> = new Map();
 
+// Per-file DB persistence chain — analyses of the same file write to Neon strictly in order,
+// so a slow, older "auto-fix" pass can never mark FIXED a finding a newer pass just saved as OPEN.
+const persistQueue: Map<string, Promise<void>> = new Map();
+
+// Detect › AI Fixing — Gemini-generated patches, keyed by finding ID (survive dashboard re-renders)
+let aiFixEngine: AiFixEngine;
+const aiFixStates: Map<string, AiFixState> = new Map();
+let aiFixHistory: AiFixProposal[] = [];
+const AI_FIX_SCHEME = 'sentinel-aifix';
+const GEMINI_KEY_SECRET = 'sentinel.geminiApiKey';
+
 // Live dashboard panel — kept open and refreshed on every analysis
 let dashboardPanel: vscode.WebviewPanel | undefined;
 
@@ -89,6 +101,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // Initialise the AI-Enhanced Analyzer — wraps base analyzer with learning filters + IFE enrichment
   aiAnalyzer = new AIEnhancedAnalyzer(analyzer, learningStore);
   log('🤖 AI-enhanced analyzer initialised.');
+
+  // AI Fix engine (Google Gemini) — API key lives in VS Code SecretStorage, never in settings
+  aiFixEngine = new AiFixEngine(analyzer, async () => context.secrets.get(GEMINI_KEY_SECRET), log);
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(AI_FIX_SCHEME, {
+      provideTextDocumentContent: uri => aiFixPreviewText(new URLSearchParams(uri.query).get('id') ?? ''),
+    }),
+    vscode.commands.registerCommand('sentinel.setGeminiApiKey', () => promptForGeminiKey(context)),
+  );
 
   // Initialise Project Store — Projects, Shifts, ShiftSessions
   projectStore = new ProjectStore(context.extensionPath);
@@ -254,7 +275,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument(doc => {
       diagnosticManager.clearDiagnostics(doc);
-      findingsCache.delete(doc.uri.toString());
+      // Its warnings are no longer live — re-render so live counts drop immediately
+      if (findingsCache.delete(doc.uri.toString())) { void refreshDashboard(); }
     })
   );
 
@@ -421,28 +443,15 @@ async function analyzeDocument(
     void eventClient.reportDetection(finding);
   }
 
-  // ── Step 5: Persist developer vulnerability record to DATA/ and Neon DB ──
+  // ── Step 5 + 5b: Persist records, then auto-detect fixed findings (queued per file) ──
   const githubUser = authManager?.getSession()?.githubUsername ?? null;
-  for (const finding of findings) {
-    await recordStore.save(finding, sessionId, developerId, githubUser);
-  }
-
-  // ── Step 5b: Auto-detect fixed findings in this file via Neon DB ────────
-  const activeFindingIds = findings.map(f => f.id);
-  void NeonDatabaseService.getInstance().autoDetectFixedFindingsInFile(
-    fileName,
-    developerId,
-    activeFindingIds
-  ).then(fixedItems => {
-    if (fixedItems && fixedItems.length > 0) {
-      for (const item of fixedItems) {
-        log(`[NeonDb] Real-time fix recorded for ${item.vulnerabilityType} (${item.findingId}) in ${path.basename(fileName)}`);
-        recordStore.unmarkSaved(item.findingId);
-        aiAnalyzer.recordAction({ id: item.findingId, type: item.vulnerabilityType as any } as any, 'FIXED', developerId);
-      }
-      void refreshDashboard();
-    }
-  });
+  const queueKey = document.uri.toString();
+  const job = (persistQueue.get(queueKey) ?? Promise.resolve())
+    .then(() => persistFindings(findings, fileName, sessionId, developerId, githubUser))
+    .catch(err => log(`[NeonDb] Persist failed for ${path.basename(fileName)}: ${err}`));
+  persistQueue.set(queueKey, job);
+  await job;
+  if (persistQueue.get(queueKey) === job) { persistQueue.delete(queueKey); }
 
   // ── Step 6: Show terminal alert for HIGH/CRITICAL findings ──────────────
   if (findings.some(f => f.severity === 'HIGH' || f.severity === 'CRITICAL')) {
@@ -477,6 +486,29 @@ async function analyzeDocument(
     }).catch(err => {
       log(`[AI] Enrichment failed: ${err}`);
     });
+  }
+}
+
+async function persistFindings(
+  findings: SecurityFinding[],
+  fileName: string,
+  sessionId: string,
+  developerId: string,
+  githubUser: string | null,
+): Promise<void> {
+  for (const finding of findings) {
+    await recordStore.save(finding, sessionId, developerId, githubUser);
+  }
+
+  const fixedItems = await NeonDatabaseService.getInstance().autoDetectFixedFindingsInFile(
+    fileName,
+    developerId,
+    findings.map(f => f.id),
+  );
+  for (const item of fixedItems ?? []) {
+    log(`[NeonDb] Real-time fix recorded for ${item.vulnerabilityType} (${item.findingId}) in ${path.basename(fileName)}`);
+    recordStore.unmarkSaved(item.findingId);
+    aiAnalyzer.recordAction({ id: item.findingId, type: item.vulnerabilityType as any } as any, 'FIXED', developerId);
   }
 }
 
@@ -619,6 +651,204 @@ function findFindingById(findingId: string): SecurityFinding | undefined {
     }
   }
   return undefined;
+}
+
+// ─── Detect › AI Fixing (Gemini-generated, rule-verified patches) ─────────────
+
+function liveFindings(): SecurityFinding[] {
+  return [...findingsCache.values()].flat();
+}
+
+async function hasGeminiCredentials(): Promise<boolean> {
+  return !!(await extensionContext.secrets.get(GEMINI_KEY_SECRET)) ||
+    !!process.env.GEMINI_API_KEY || !!process.env.GOOGLE_API_KEY;
+}
+
+function aiFixOptions(): AiFixEngineOptions {
+  const cfg = vscode.workspace.getConfiguration('sentinel');
+  return {
+    model: cfg.get<string>('aiFix.model', 'gemini-flash-latest') || 'gemini-flash-latest',
+  };
+}
+
+async function aiFixDashboardData(findings: SecurityFinding[]): Promise<AiFixDashboardData> {
+  // Drop proposals for warnings that are no longer live (fixed, ignored or file closed)
+  const live = new Set(findings.map(f => f.id));
+  for (const [id, st] of aiFixStates) {
+    if (!live.has(id) && st.status !== 'pending') { aiFixStates.delete(id); }
+  }
+  return {
+    configured: await hasGeminiCredentials(),
+    model: aiFixOptions().model,
+    states: Object.fromEntries(aiFixStates),
+    history: aiFixHistory,
+  };
+}
+
+/** Patch one AI-fix card (and the summary chips) in place — no full re-render, scroll is kept. */
+async function pushAiFixUpdate(findingId: string): Promise<void> {
+  const findings = liveFindings();
+  postToDashboard({
+    command: 'AI_FIX_UPDATE',
+    findingId,
+    html: buildAiFixBodyHtml(findingId, aiFixStates.get(findingId)),
+    summaryHtml: buildAiFixSummaryHtml(findings, await aiFixDashboardData(findings)),
+  });
+}
+
+async function promptForGeminiKey(context: vscode.ExtensionContext): Promise<void> {
+  const key = await vscode.window.showInputBox({
+    title: 'Sentinel — Gemini API Key',
+    prompt: 'Used by Detect › AI Fixing. Stored securely in VS Code SecretStorage. Leave empty to remove the stored key.',
+    password: true,
+    ignoreFocusOut: true,
+    placeHolder: 'Paste your Google AI Studio (Gemini) API key',
+  });
+  if (key === undefined) { return; }
+  if (key.trim()) {
+    await context.secrets.store(GEMINI_KEY_SECRET, key.trim());
+    vscode.window.showInformationMessage('Sentinel: Gemini API key saved. AI Fixing is ready.');
+  } else {
+    await context.secrets.delete(GEMINI_KEY_SECRET);
+    vscode.window.showInformationMessage('Sentinel: Stored Gemini API key removed.');
+  }
+  void refreshDashboard();
+}
+
+async function generateAiFix(findingId: string): Promise<void> {
+  const finding = findFindingById(findingId);
+  if (!finding) {
+    aiFixStates.set(findingId, { status: 'error', error: 'This warning is no longer live — it may already be fixed.' });
+    return pushAiFixUpdate(findingId);
+  }
+  if (aiFixStates.get(findingId)?.status === 'pending') { return; }
+  aiFixStates.set(findingId, { status: 'pending', startedAt: new Date().toISOString() });
+  void pushAiFixUpdate(findingId);
+
+  const opts = aiFixOptions();
+  try {
+    const doc = await vscode.workspace.openTextDocument(finding.fileName);
+    const proposal = await aiFixEngine.generateFix(finding, doc.getText(), doc.languageId, opts);
+    aiFixStates.set(findingId, { status: 'ready', proposal });
+    void logAiFixActivity('AI_FIX_GENERATED', finding, { model: opts.model, verified: proposal.verified, attempts: proposal.attempts });
+  } catch (err) {
+    const error = describeAiFixError(err);
+    log(`[AI Fix] Failed for ${finding.type} @ line ${finding.lineNumber}: ${error}`);
+    aiFixStates.set(findingId, { status: 'error', error });
+  }
+  await pushAiFixUpdate(findingId);
+}
+
+async function applyAiFix(findingId: string): Promise<void> {
+  const st = aiFixStates.get(findingId);
+  if (st?.status !== 'ready') { return; }
+  const p = st.proposal;
+  const doc = await vscode.workspace.openTextDocument(p.fileName);
+  const stale = () => {
+    aiFixStates.set(findingId, { status: 'error', error: 'The code changed since this fix was generated — regenerate it.' });
+    return pushAiFixUpdate(findingId);
+  };
+  if (p.endLine > doc.lineCount) { return stale(); }
+  const range = new vscode.Range(p.startLine - 1, 0, p.endLine - 1, doc.lineAt(p.endLine - 1).text.length);
+  // Guard against applying a patch to code that has moved or been edited since generation
+  if (doc.getText(range) !== p.originalCode) { return stale(); }
+
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(doc.uri, range, p.fixedCode);
+  if (!(await vscode.workspace.applyEdit(edit))) {
+    aiFixStates.set(findingId, { status: 'error', error: 'VS Code could not apply the edit.' });
+    return pushAiFixUpdate(findingId);
+  }
+  const newLines = p.fixedCode.split(/\r?\n/);
+  await vscode.window.showTextDocument(doc, {
+    preview: false,
+    preserveFocus: true,
+    selection: new vscode.Range(p.startLine - 1, 0, p.startLine - 2 + newLines.length, newLines[newLines.length - 1].length),
+  });
+  aiFixStates.set(findingId, { status: 'applied', proposal: p, appliedAt: new Date().toISOString() });
+  aiFixHistory = [p, ...aiFixHistory].slice(0, 10);
+  const finding = findFindingById(findingId);
+  if (finding) { void logAiFixActivity('AI_FIX_APPLIED', finding, { model: p.model, verified: p.verified }); }
+  log(`[AI Fix] Applied fix for ${p.vulnerabilityType} in ${path.basename(p.fileName)} (lines ${p.startLine}-${p.endLine}).`);
+  await pushAiFixUpdate(findingId);
+  // Re-scan right away — the real-time engine records FIXED once the warning disappears
+  void analyzeDocument(doc, false);
+}
+
+/** Right-hand side of the "Open Diff" view: the whole file with the proposal applied. */
+function aiFixPreviewText(findingId: string): string {
+  const st = aiFixStates.get(findingId);
+  if (!st || (st.status !== 'ready' && st.status !== 'applied')) { return ''; }
+  const p = st.proposal;
+  const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === p.fileName);
+  if (!doc) { return p.fixedCode; }
+  const eol = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+  const lines = doc.getText().split(/\r?\n/);
+  return [...lines.slice(0, p.startLine - 1), ...p.fixedCode.split(/\r?\n/), ...lines.slice(p.endLine)].join(eol);
+}
+
+async function logAiFixActivity(actionType: string, finding: SecurityFinding, details: Record<string, unknown>): Promise<void> {
+  const s = authManager.getSession();
+  await NeonDatabaseService.getInstance().logActivity({
+    userId: s?.userId, username: s?.username, githubUsername: s?.githubUsername,
+    developerId: s?.githubUsername ?? s?.username,
+    actionType, findingId: finding.id, vulnerabilityType: finding.type,
+    details: { ...details, fileName: path.basename(finding.fileName), lineNumber: finding.lineNumber },
+  }).catch(err => log(`[AI Fix] Activity log failed: ${err}`));
+}
+
+async function handleAiFixMessage(message: { command: string; [key: string]: any }): Promise<void> {
+  const findingId = String(message.findingId ?? '');
+  switch (message.command) {
+    case 'AI_FIX_SET_KEY':
+      return promptForGeminiKey(extensionContext);
+
+    case 'AI_FIX_GENERATE':
+      if (!(await hasGeminiCredentials())) {
+        aiFixStates.set(findingId, { status: 'error', error: 'No Gemini API key configured — click "Set API key" above.' });
+        return pushAiFixUpdate(findingId);
+      }
+      return generateAiFix(findingId);
+
+    case 'AI_FIX_GENERATE_ALL': {
+      if (!(await hasGeminiCredentials())) { return promptForGeminiKey(extensionContext); }
+      const queue = liveFindings().filter(f => {
+        const s = aiFixStates.get(f.id)?.status;
+        return s !== 'pending' && s !== 'ready' && s !== 'applied';
+      }).map(f => f.id);
+      // Two requests at a time keeps the dashboard responsive without hammering the API
+      const worker = async () => { for (let id = queue.shift(); id; id = queue.shift()) { await generateAiFix(id); } };
+      await Promise.all([worker(), worker()]);
+      return;
+    }
+
+    case 'AI_FIX_APPLY':
+      return applyAiFix(findingId);
+
+    case 'AI_FIX_DIFF': {
+      const st = aiFixStates.get(findingId);
+      if (!st || (st.status !== 'ready' && st.status !== 'applied')) { return; }
+      const p = st.proposal;
+      await vscode.workspace.openTextDocument(p.fileName); // make sure the preview can read current text
+      const right = vscode.Uri.from({ scheme: AI_FIX_SCHEME, path: p.fileName, query: `id=${encodeURIComponent(findingId)}&t=${Date.now()}` });
+      await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(p.fileName), right,
+        `AI Fix: ${path.basename(p.fileName)} (lines ${p.startLine}–${p.endLine})`);
+      return;
+    }
+
+    case 'AI_FIX_COPY': {
+      const st = aiFixStates.get(findingId);
+      if (st && (st.status === 'ready' || st.status === 'applied')) {
+        await vscode.env.clipboard.writeText(st.proposal.fixedCode);
+        vscode.window.setStatusBarMessage('Sentinel: AI fix copied to clipboard', 3000);
+      }
+      return;
+    }
+
+    case 'AI_FIX_DISCARD':
+      aiFixStates.delete(findingId);
+      return pushAiFixUpdate(findingId);
+  }
 }
 
 // ─── Administrator & database management messages ────────────────────────────
@@ -1198,8 +1428,14 @@ function showLoadingScreen(title: string, subtitle: string): void {
   dashboardPanel.webview.html = buildLoadingHtml(dashboardPanel.webview.cspSource, logoUri, title, subtitle);
 }
 
+// Refreshes overlap (every analysis triggers one); only the newest may write the HTML,
+// otherwise a slower, older DB query can overwrite fresh results with stale ones.
+let refreshSeq = 0;
+const isStaleRefresh = (seq: number): boolean => seq !== refreshSeq || !dashboardPanel;
+
 async function refreshDashboard(): Promise<void> {
   if (!dashboardPanel) { return; }
+  const seq = ++refreshSeq;
 
   const logoUri = dashboardPanel.webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, 'resources', 'sentinel-logo.png')
@@ -1250,6 +1486,10 @@ async function refreshDashboard(): Promise<void> {
     } catch (e) {
       console.warn('[Sentinel] Error querying Neon DB for dashboard:', e);
     }
+    if (isStaleRefresh(seq)) { return; }
+
+    const aiFix = await aiFixDashboardData(allFindings);
+    if (isStaleRefresh(seq)) { return; }
 
     const insights = computeDeveloperInsights({
       developerId: devId,
@@ -1281,6 +1521,7 @@ async function refreshDashboard(): Promise<void> {
         url: apiServer?.isRunning ? apiServer.url : '',
         error: apiServerError,
       },
+      aiFix,
     );
   } else if (session.role === 'supervisor') {
     dashboardPanel.title = 'Sentinel — Supervisor Dashboard';
@@ -1292,6 +1533,7 @@ async function refreshDashboard(): Promise<void> {
       log(`[Supervisor] Failed to load dashboard data: ${err}`);
       return [[], [], []] as [any[], any[], any[]];
     });
+    if (isStaleRefresh(seq)) { return; }
     setDeveloperStats(devStats);
     const projects  = supervisedProjects(session);
     const projIds   = new Set(projects.map(p => p.id));
@@ -1327,6 +1569,7 @@ async function refreshDashboard(): Promise<void> {
       log(`[Admin] Failed to load dashboard data: ${err}`);
       return [[], [], [], []] as [any[], any[], any[], any[]];
     });
+    if (isStaleRefresh(seq)) { return; }
     setDeveloperStats(devStats);
     const insights = computeDeveloperInsights({
       developerId: 'ALL', liveFindings: [], records, learningProfile: null, activities, shiftSessions: [],
@@ -1408,6 +1651,10 @@ function handleWebviewMessage(message: { command: string; [key: string]: any }):
   }
   if (message.command.startsWith('NOTIFICATION')) {
     void handleNotificationMessage(message);
+    return;
+  }
+  if (message.command.startsWith('AI_FIX_')) {
+    void handleAiFixMessage(message);
     return;
   }
   switch (message.command) {

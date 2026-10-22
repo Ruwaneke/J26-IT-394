@@ -756,7 +756,7 @@ export class NeonDatabaseService {
     sessionId: string,
     explanation: ContextualExplanation,
     shiftId: string | null = null
-  ): Promise<DbVulnerabilityRecord> {
+  ): Promise<DbVulnerabilityRecord | null> {
     const recordId = `REC-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 
     const record: DbVulnerabilityRecord = {
@@ -884,14 +884,16 @@ export class NeonDatabaseService {
         });
 
         console.log(`[NeonDb] Successfully saved ${record.vulnerabilityType} (${record.findingId}) for ${developerId} in ${path.basename(record.fileName)}`);
+        this.appendLocalRecord(developerId, record);
+        return record;
       } catch (err: any) {
         console.error('[NeonDb] saveVulnerabilityRecord error:', err.message);
       }
     }
 
-    // Also persist to local file for safety
+    // Not written to Neon: keep a local copy, but return null so the caller retries on the next analysis
     this.appendLocalRecord(developerId, record);
-    return record;
+    return null;
   }
 
   /**
@@ -1295,7 +1297,9 @@ export class NeonDatabaseService {
   }
 
   private appendLocalRecord(_developerId: string, record: DbVulnerabilityRecord): void {
-    this.memRecords.push(record);
+    // Retries of an unsaved finding must not pile up duplicates
+    const i = this.memRecords.findIndex(r => r.findingId === record.findingId && r.developerId === record.developerId);
+    if (i >= 0) { this.memRecords[i] = record; } else { this.memRecords.push(record); }
   }
 
   private updateLocalRecordStatus(developerId: string, findingId: string, status: VulnerabilityStatus): void {

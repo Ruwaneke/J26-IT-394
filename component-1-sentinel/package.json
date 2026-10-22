@@ -55,6 +55,10 @@
       {
         "command": "sentinel.showOutput",
         "title": "Sentinel: Show Output Channel"
+      },
+      {
+        "command": "sentinel.setGeminiApiKey",
+        "title": "Sentinel: Set Gemini API Key (AI Fixing)"
       }
     ],
     "menus": {
@@ -162,6 +166,11 @@
           ],
           "default": 15,
           "description": "Remind assigned developers and the supervisor this many minutes before a shift starts (0 = off)"
+        },
+        "sentinel.aiFix.model": {
+          "type": "string",
+          "default": "gemini-flash-latest",
+          "description": "Google Gemini model used by Detect › AI Fixing (e.g. gemini-flash-latest, gemini-pro-latest if your key has Pro quota). If it is overloaded or out of quota, Sentinel falls back to gemini-flash-latest, gemini-2.5-flash, then gemini-flash-lite-latest."
         }
       }
     }
@@ -184,7 +193,9 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "@google/genai": "^2.30.0",
     "node-fetch": "^3.3.2",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
   }
 }
